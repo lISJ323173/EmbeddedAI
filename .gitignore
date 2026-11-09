@@ -1,0 +1,31 @@
+# ---- 构建产物 ----
+build/
+cmake-build-*/
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.su
+compile_commands.json
+
+# ---- IDE ----
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.code-workspace
+
+# ---- 系统 / 临时 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej

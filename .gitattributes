@@ -1,0 +1,11 @@
+* text=auto eol=lf
+*.s    text
+*.ld   text
+*.cmake text
+
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.hex  binary
+*.bin  binary
+*.a    binary
