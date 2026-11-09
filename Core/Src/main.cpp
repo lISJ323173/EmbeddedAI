@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <cstdio>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,7 +56,29 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+extern "C" int _write(int file, char *ptr, int len)
+{
+    (void)file;
 
+    if (ptr == nullptr || len < 0)
+    {
+        return -1;
+    }
+
+    if (len == 0)
+    {
+        return 0;
+    }
+
+    HAL_StatusTypeDef status = HAL_UART_Transmit(
+        &huart1,
+        reinterpret_cast<uint8_t *>(ptr),
+        static_cast<uint16_t>(len),
+        1000
+    );
+
+    return (status == HAL_OK) ? len : -1;
+}
 /* USER CODE END 0 */
 
 /**
@@ -90,7 +112,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-
+std::printf("Framework boot OK\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -100,6 +122,16 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    static uint32_t last_tick = 0;
+
+    uint32_t now = HAL_GetTick();
+
+    if (now - last_tick >= 1000U)
+    {
+    last_tick = now;
+    std::printf("Heartbeat: %lu ms\r\n",
+                static_cast<unsigned long>(now));
+    }
   }
   /* USER CODE END 3 */
 }
