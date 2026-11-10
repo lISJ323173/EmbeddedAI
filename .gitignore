@@ -29,3 +29,11 @@ desktop.ini
 *.bak
 *.orig
 *.rej
+# Host-side test build artifacts
+/tests/host/*.exe
+/tests/host/*.o
+/tests/host/*.obj
+/tests/host/*.dll
+/tests/host/build/
+# Local test workspace settings
+/tests/.vscode/

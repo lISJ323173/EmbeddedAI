@@ -29,6 +29,17 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 # Core project settings
 project(${CMAKE_PROJECT_NAME})
+# BSP public interfaces
+add_library(bsp_interfaces INTERFACE)
+
+target_include_directories(bsp_interfaces INTERFACE
+    ${CMAKE_SOURCE_DIR}/bsp/include
+)
+
+target_compile_features(bsp_interfaces INTERFACE
+    cxx_std_17
+)
+
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
 # Enable CMake support for ASM and C languages
@@ -42,17 +53,17 @@ add_subdirectory(cmake/stm32cubemx)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined library search paths
+   port/stm32/src/stm32_uart.cpp
 )
 
 # Add sources to executable
+# STM32F4 platform drivers
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user sources here
+    port/stm32f4/src/stm32_uart.cpp
 )
 
-# Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
+    ${CMAKE_SOURCE_DIR}/port/stm32f4/include
 )
 
 # Add project symbols (macros)
@@ -63,9 +74,9 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
-# Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
+    bsp_interfaces
 
     # Add user defined libraries
 )
