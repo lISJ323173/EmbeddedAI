@@ -1,11 +1,14 @@
 #pragma once
 
 #include "bsp/iuart.hpp"
+#include "bsp/iuart_async.hpp"
 #include "stm32f4xx_hal.h"
 
 namespace port {
 
-class Stm32Uart final : public bsp::IUart {
+class Stm32Uart final
+    : public bsp::IUart,
+      public bsp::IUartAsync { {
 public:
     explicit Stm32Uart(UART_HandleTypeDef& handle) noexcept;
 
