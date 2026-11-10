@@ -12,6 +12,8 @@ add_executable(uart_test
     uart_test.cpp
     mock_hal/mock_uart.cpp
     ../../port/stm32f4/src/stm32_uart.cpp
+    ../../port/stm32f4/src/uart_callback_router.cpp
+    ../../port/stm32f4/src/uart_hal_callbacks.cpp
 )
 
 target_include_directories(uart_test PRIVATE

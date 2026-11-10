@@ -53,12 +53,14 @@ add_subdirectory(cmake/stm32cubemx)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-   port/stm32/src/stm32_uart.cpp
+    port/stm32/src/stm32_uart.cpp
 )
 
 # Add sources to executable
 # STM32F4 platform drivers
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    port/stm32f4/src/uart_callback_router.cpp
+    port/stm32f4/src/uart_hal_callbacks.cpp
     port/stm32f4/src/stm32_uart.cpp
 )
 

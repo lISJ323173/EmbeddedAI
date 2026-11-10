@@ -22,6 +22,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <cstdio>
+#include "stm32_uart.hpp"
+#include "uart_callback_router.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,7 +45,10 @@
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-
+extern "C" {
+    DMA_HandleTypeDef hdma_usart1_tx;
+    DMA_HandleTypeDef hdma_usart1_rx;
+}
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -51,7 +56,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void MX_DMA_Init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -110,6 +115,18 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
+
+  /* USER CODE BEGIN USART1_PORT_REGISTER */
+static port::Stm32Uart uart1_port(huart1);
+
+if (port::uart_router::register_uart(&huart1, &uart1_port)
+    != bsp::Error::Ok)
+{
+    Error_Handler();
+}
+/* USER CODE END USART1_PORT_REGISTER */
+
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 std::printf("Framework boot OK\r\n");
@@ -248,7 +265,16 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+static void MX_DMA_Init(void)
+{
+    __HAL_RCC_DMA2_CLK_ENABLE();
 
+    HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
+
+    HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
+}
 /* USER CODE END 4 */
 
 /**

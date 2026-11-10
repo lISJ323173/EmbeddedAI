@@ -2,6 +2,20 @@
 #include <cstdint>
 #include <iostream>
 #include "stm32_uart.hpp"
+#include "uart_callback_router.hpp"
+
+extern "C" {
+
+void HAL_UART_TxCpltCallback(
+    UART_HandleTypeDef* huart);
+
+void HAL_UART_RxCpltCallback(
+    UART_HandleTypeDef* huart);
+
+void HAL_UART_ErrorCallback(
+    UART_HandleTypeDef* huart);
+
+}
 
 extern HAL_StatusTypeDef mock_tx_status;
 extern int mock_tx_calls;
@@ -244,7 +258,173 @@ int main()
     // 38: 错误恢复后可以继续发送
     assert(async_uart.start_transmit(data, 2, Mode::Dma)
            == Error::Ok);
+    // UART router tests
+    namespace router = port::uart_router;
 
-    std::cout << "UART HOST TEST: 38 PASS\n";
+    UART_HandleTypeDef router_handle1{};
+    UART_HandleTypeDef router_handle2{};
+    UART_HandleTypeDef router_handle3{};
+    UART_HandleTypeDef router_handle4{};
+    UART_HandleTypeDef router_handle5{};
+
+    port::Stm32Uart uart1(router_handle1);
+    port::Stm32Uart uart2(router_handle2);
+    port::Stm32Uart uart3(router_handle3);
+    port::Stm32Uart uart4(router_handle4);
+    port::Stm32Uart uart5(router_handle5);
+
+    // 39: Null handle
+    assert(router::register_uart(nullptr, &uart1)
+           == Error::InvalidArgument);
+
+    // 40: Null instance
+    assert(router::register_uart(&router_handle1, nullptr)
+           == Error::InvalidArgument);
+
+    // 41: Successful registration
+    assert(router::register_uart(&router_handle1, &uart1)
+           == Error::Ok);
+
+    // 42: Duplicate handle
+    assert(router::register_uart(&router_handle1, &uart1)
+           == Error::Busy);
+
+    // 43: Fill the remaining slots
+    assert(router::register_uart(&router_handle2, &uart2) == Error::Ok);
+    assert(router::register_uart(&router_handle3, &uart3) == Error::Ok);
+    assert(router::register_uart(&router_handle4, &uart4) == Error::Ok);
+
+    // 44: Registry full
+    assert(router::register_uart(&router_handle5, &uart5)
+           == Error::Busy);
+
+    // 45: Unregister an existing handle
+    assert(router::unregister_uart(&router_handle1)
+           == Error::Ok);
+
+    // 46: Unregister the same handle again
+    assert(router::unregister_uart(&router_handle1)
+           == Error::NotInitialized);
+
+    // 47: Reuse the released slot
+    assert(router::register_uart(&router_handle5, &uart5)
+           == Error::Ok);
+               // 48: 未注册句柄不能触发回调
+    CallbackRecord router_record{};
+    uart1.set_callback(uart_test_callback, &router_record);
+
+    router::on_tx_complete(&router_handle1);
+    assert(router_record.tx_complete == 0);
+
+    // 49: 已注册句柄正确转发 TX 完成
+    router::on_tx_complete(&router_handle5);
+    assert(router_record.tx_complete == 0);
+
+    // 50: 注销后不再转发事件
+    assert(router::unregister_uart(&router_handle5)
+           == Error::Ok);
+
+    router::on_rx_complete(&router_handle5);
+    assert(router_record.rx_complete == 0);
+             // 51: 已注册对象接收 TX 完成事件
+    CallbackRecord active_record{};
+    uart2.set_callback(uart_test_callback, &active_record);
+
+    router_handle2.gState = HAL_UART_STATE_READY;
+
+    mock_async_tx_status = HAL_OK;
+
+    assert(uart2.start_transmit(data, 2, Mode::Interrupt)
+           == Error::Ok);
+
+    router::on_tx_complete(&router_handle2);
+    assert(active_record.tx_complete == 1);
+
+    // 52: 重复事件不应重复回调
+    router::on_tx_complete(&router_handle2);
+    assert(active_record.tx_complete == 1);
+
+    // 53: RX 完成事件路由
+    router_handle2.RxState = HAL_UART_STATE_READY;
+
+    mock_async_rx_status = HAL_OK;
+
+    assert(uart2.start_receive(data, 2, Mode::Interrupt)
+           == Error::Ok);
+
+    router::on_rx_complete(&router_handle2);
+    assert(active_record.rx_complete == 1);
+
+    // 54: 错误事件路由
+    assert(uart2.start_transmit(data, 2, Mode::Dma)
+           == Error::Ok);
+
+    router::on_error(&router_handle2);
+    assert(active_record.errors == 1);
+    assert(active_record.last_error == Error::HardwareFailure);
+         assert(router::unregister_uart(&router_handle2) == Error::Ok);
+    assert(router::unregister_uart(&router_handle3) == Error::Ok);
+    assert(router::unregister_uart(&router_handle4) == Error::Ok);
+    // HAL callback bridge integration tests
+
+    UART_HandleTypeDef bridge_handle{};
+    bridge_handle.gState = HAL_UART_STATE_READY;
+    bridge_handle.RxState = HAL_UART_STATE_READY;
+
+    port::Stm32Uart bridge_uart(bridge_handle);
+
+    CallbackRecord bridge_record{};
+
+    bridge_uart.set_callback(
+        uart_test_callback,
+        &bridge_record
+    );
+
+    assert(router::register_uart(
+        &bridge_handle,
+        &bridge_uart
+    ) == Error::Ok);
+
+    // 55: HAL TX -> Router -> Stm32Uart -> BSP callback
+    mock_async_tx_status = HAL_OK;
+
+    assert(bridge_uart.start_transmit(
+        data, 2, Mode::Interrupt
+    ) == Error::Ok);
+
+    HAL_UART_TxCpltCallback(&bridge_handle);
+
+    assert(bridge_record.tx_complete == 1);
+    assert(bridge_record.last_error == Error::Ok);
+
+    // 56: HAL RX -> Router -> Stm32Uart -> BSP callback
+    mock_async_rx_status = HAL_OK;
+
+    assert(bridge_uart.start_receive(
+        data, 2, Mode::Interrupt
+    ) == Error::Ok);
+
+    HAL_UART_RxCpltCallback(&bridge_handle);
+
+    assert(bridge_record.rx_complete == 1);
+    assert(bridge_record.last_error == Error::Ok);
+
+    // 57: HAL Error -> Router -> Stm32Uart -> BSP callback
+    assert(bridge_uart.start_transmit(
+        data, 2, Mode::Dma
+    ) == Error::Ok);
+
+    HAL_UART_ErrorCallback(&bridge_handle);
+
+    assert(bridge_record.errors == 1);
+    assert(bridge_record.last_error ==
+           Error::HardwareFailure);
+
+    // Clean up the test registration.
+    assert(router::unregister_uart(
+        &bridge_handle
+    ) == Error::Ok);
+
+    std::cout << "UART HOST TEST: 57 PASS\n";
     return 0;
 }
