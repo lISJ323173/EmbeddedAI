@@ -69,21 +69,46 @@ bsp::Error Stm32Uart::start_transmit(
     if (handle_.gState == HAL_UART_STATE_RESET)
         return bsp::Error::NotInitialized;
 
-    if (tx_state_ == TransferState::Busy){
-        return bsp::Error::Busy;
-    }
+  TransferState expected = TransferState::Idle;
+if (!tx_state_.compare_exchange_strong(
+        expected, TransferState::Starting)) {
+    return bsp::Error::Busy;
+}
 
-        tx_state_ = TransferState::Busy;
+HAL_StatusTypeDef status;
+switch (mode) {
+case bsp::UartTransferMode::Interrupt:
+    status = HAL_UART_Transmit_IT(
+        &handle_, data, static_cast<std::uint16_t>(size));
+    break;
+case bsp::UartTransferMode::Dma:
+    status = HAL_UART_Transmit_DMA(
+        &handle_, data, static_cast<std::uint16_t>(size));
+    break;
+default:
+    tx_state_.store(TransferState::Idle);
+    return bsp::Error::InvalidArgument;
+}
 
-    HAL_StatusTypeDef status =
-        mode == bsp::UartTransferMode::Interrupt
-        ? HAL_UART_Transmit_IT(&handle_, data, static_cast<std::uint16_t>(size))
-        : HAL_UART_Transmit_DMA(&handle_, data, static_cast<std::uint16_t>(size));
-
-    if (status != HAL_OK)
-        tx_state_ = TransferState::Idle;
-
+if (status != HAL_OK) {
+    tx_state_.store(TransferState::Idle);
     return map_status(status);
+}
+
+expected = TransferState::Starting;
+if (tx_state_.compare_exchange_strong(
+        expected, TransferState::Busy)) {
+    return bsp::Error::Ok;
+}
+
+if (expected == TransferState::CompletedEarly) {
+    tx_state_.store(TransferState::Idle);
+    if (callback_)
+        callback_(callback_context_,
+                  bsp::UartEvent::TxComplete, bsp::Error::Ok);
+    return bsp::Error::Ok;
+}
+return bsp::Error::HardwareFailure;
 }
 
 bsp::Error Stm32Uart::start_receive(
@@ -97,19 +122,46 @@ bsp::Error Stm32Uart::start_receive(
     if (handle_.RxState == HAL_UART_STATE_RESET)
         return bsp::Error::NotInitialized;
 
-    if (rx_state_ == TransferState::Busy){
-        return bsp::Error::Busy;
-    }
-        rx_state_ = TransferState::Busy;
-    HAL_StatusTypeDef status =
-        mode == bsp::UartTransferMode::Interrupt
-        ? HAL_UART_Receive_IT(&handle_, data, static_cast<std::uint16_t>(size))
-        : HAL_UART_Receive_DMA(&handle_, data, static_cast<std::uint16_t>(size));
+    TransferState expected = TransferState::Idle;
+if (!rx_state_.compare_exchange_strong(
+        expected, TransferState::Starting)) {
+    return bsp::Error::Busy;
+}
 
-    if (status != HAL_OK){
-        rx_state_ = TransferState::Idle;
-    }
+HAL_StatusTypeDef status;
+switch (mode) {
+case bsp::UartTransferMode::Interrupt:
+    status = HAL_UART_Receive_IT(
+        &handle_, data, static_cast<std::uint16_t>(size));
+    break;
+case bsp::UartTransferMode::Dma:
+    status = HAL_UART_Receive_DMA(
+        &handle_, data, static_cast<std::uint16_t>(size));
+    break;
+default:
+    rx_state_.store(TransferState::Idle);
+    return bsp::Error::InvalidArgument;
+}
+
+if (status != HAL_OK) {
+    rx_state_.store(TransferState::Idle);
     return map_status(status);
+}
+
+expected = TransferState::Starting;
+if (rx_state_.compare_exchange_strong(
+        expected, TransferState::Busy)) {
+    return bsp::Error::Ok;
+}
+
+if (expected == TransferState::CompletedEarly) {
+    rx_state_.store(TransferState::Idle);
+    if (callback_)
+        callback_(callback_context_,
+                  bsp::UartEvent::RxComplete, bsp::Error::Ok);
+    return bsp::Error::Ok;
+}
+return bsp::Error::HardwareFailure;
 }
 
 void Stm32Uart::set_callback(
@@ -121,10 +173,17 @@ void Stm32Uart::set_callback(
 }
 void Stm32Uart::on_tx_complete() noexcept
 {
-    if (tx_state_ != TransferState::Busy)
+    TransferState expected = TransferState::Starting;
+    if (tx_state_.compare_exchange_strong(
+            expected, TransferState::CompletedEarly)) {
         return;
+    }
 
-    tx_state_ = TransferState::Idle;
+    expected = TransferState::Busy;
+    if (!tx_state_.compare_exchange_strong(
+            expected, TransferState::Idle)) {
+        return;
+    }
 
     if (callback_)
         callback_(callback_context_,
@@ -134,10 +193,17 @@ void Stm32Uart::on_tx_complete() noexcept
 
 void Stm32Uart::on_rx_complete() noexcept
 {
-    if (rx_state_ != TransferState::Busy)
+    TransferState expected = TransferState::Starting;
+    if (rx_state_.compare_exchange_strong(
+            expected, TransferState::CompletedEarly)) {
         return;
+    }
 
-    rx_state_ = TransferState::Idle;
+    expected = TransferState::Busy;
+    if (!rx_state_.compare_exchange_strong(
+            expected, TransferState::Idle)) {
+        return;
+    }
 
     if (callback_)
         callback_(callback_context_,
@@ -152,8 +218,12 @@ void Stm32Uart::on_error(bsp::Error error) noexcept
         tx_state_ == TransferState::Busy ||
         rx_state_ == TransferState::Busy;
 
-    tx_state_ = TransferState::Idle;
-    rx_state_ = TransferState::Idle;
+   tx_state_.store(
+    TransferState::Idle,
+    std::memory_order_release);
+   rx_state_.store(
+    TransferState::Idle,
+    std::memory_order_release);
 
     if (active && callback_)
         callback_(callback_context_,

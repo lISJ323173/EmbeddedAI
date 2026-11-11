@@ -24,6 +24,9 @@ extern int mock_rx_calls;
 extern HAL_StatusTypeDef mock_async_tx_status;
 extern HAL_StatusTypeDef mock_async_rx_status;
 
+extern bool mock_tx_complete_during_start;
+extern bool mock_rx_complete_during_start;
+
 extern int mock_tx_it_calls;
 extern int mock_tx_dma_calls;
 extern int mock_rx_it_calls;
@@ -424,7 +427,98 @@ int main()
     assert(router::unregister_uart(
         &bridge_handle
     ) == Error::Ok);
+// 58: Invalid TX transfer mode
+UART_HandleTypeDef invalid_mode_handle{};
+invalid_mode_handle.gState = HAL_UART_STATE_READY;
+invalid_mode_handle.RxState = HAL_UART_STATE_READY;
 
-    std::cout << "UART HOST TEST: 57 PASS\n";
+port::Stm32Uart invalid_mode_uart(invalid_mode_handle);
+
+const auto invalid_mode =
+    static_cast<Mode>(255);
+
+assert(invalid_mode_uart.start_transmit(
+    data, 2, invalid_mode) == Error::InvalidArgument);
+
+// 59: Invalid RX transfer mode
+assert(invalid_mode_uart.start_receive(
+    data, 2, invalid_mode) == Error::InvalidArgument);
+
+    // 60–62: TX early-completion fault injection
+UART_HandleTypeDef early_handle{};
+early_handle.gState = HAL_UART_STATE_READY;
+
+port::Stm32Uart early_uart(early_handle);
+CallbackRecord early_record{};
+
+early_uart.set_callback(uart_test_callback, &early_record);
+
+assert(router::register_uart(&early_handle, &early_uart)
+       == Error::Ok);
+
+mock_tx_complete_during_start = true;
+mock_async_tx_status = HAL_OK;
+
+// 60: Callback before HAL returns success
+assert(early_uart.start_transmit(data, 2, Mode::Interrupt)
+       == Error::Ok);
+assert(early_record.tx_complete == 1);
+
+// 61: Callback before HAL returns failure
+mock_async_tx_status = HAL_ERROR;
+assert(early_uart.start_transmit(data, 2, Mode::Interrupt)
+       == Error::HardwareFailure);
+assert(early_record.tx_complete == 1);
+
+// 62: Start again after early completion
+mock_async_tx_status = HAL_OK;
+assert(early_uart.start_transmit(data, 2, Mode::Interrupt)
+       == Error::Ok);
+assert(early_record.tx_complete == 2);
+
+mock_tx_complete_during_start = false;
+
+assert(router::unregister_uart(&early_handle)
+       == Error::Ok);
+
+       // 63–65: RX early-completion tests
+UART_HandleTypeDef early_rx_handle{};
+early_rx_handle.RxState = HAL_UART_STATE_READY;
+
+port::Stm32Uart early_rx_uart(early_rx_handle);
+CallbackRecord early_rx_record{};
+
+early_rx_uart.set_callback(uart_test_callback, &early_rx_record);
+
+assert(router::register_uart(
+    &early_rx_handle, &early_rx_uart) == Error::Ok);
+
+mock_rx_complete_during_start = true;
+mock_async_rx_status = HAL_OK;
+
+// 63: RX completes before HAL returns
+assert(early_rx_uart.start_receive(
+    data, 2, Mode::Interrupt) == Error::Ok);
+assert(early_rx_record.rx_complete == 1);
+
+// 64: RX early completion + HAL failure
+mock_async_rx_status = HAL_ERROR;
+assert(early_rx_uart.start_receive(
+    data, 2, Mode::Interrupt) == Error::HardwareFailure);
+assert(early_rx_record.rx_complete == 1);
+
+// 65: RX can restart after early completion
+mock_async_rx_status = HAL_OK;
+assert(early_rx_uart.start_receive(
+    data, 2, Mode::Interrupt) == Error::Ok);
+assert(early_rx_record.rx_complete == 2);
+
+mock_rx_complete_during_start = false;
+
+assert(router::unregister_uart(
+    &early_rx_handle) == Error::Ok);
+
+
+    std::cout << "UART HOST TEST: 65 PASS\n";
     return 0;
 }

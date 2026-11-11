@@ -3,6 +3,7 @@
 #include "bsp/iuart.hpp"
 #include "bsp/iuart_async.hpp"
 #include "stm32f4xx_hal.h"
+#include <atomic>
 
 namespace port {
 
@@ -47,11 +48,13 @@ private:
     UART_HandleTypeDef& handle_;
         enum class TransferState : std::uint8_t {
         Idle,
-        Busy
+        Starting,
+        Busy,
+        CompletedEarly
     };
 
-    TransferState tx_state_{TransferState::Idle};
-    TransferState rx_state_{TransferState::Idle};
+   std::atomic<TransferState> tx_state_{TransferState::Idle};
+std::atomic<TransferState> rx_state_{TransferState::Idle};
 
     bsp::UartCallback callback_{nullptr};
     void* callback_context_{nullptr};
