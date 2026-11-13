@@ -44,4 +44,7 @@ HAL_StatusTypeDef HAL_UART_Transmit_DMA(
 
 HAL_StatusTypeDef HAL_UART_Receive_DMA(
     UART_HandleTypeDef*, std::uint8_t*, std::uint16_t);
+
+HAL_StatusTypeDef HAL_UART_Abort(
+    UART_HandleTypeDef* huart);
 }

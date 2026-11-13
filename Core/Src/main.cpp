@@ -61,6 +61,42 @@ static void MX_DMA_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static volatile bool uart_it_done = false;
+
+static void uart_it_callback(
+    void*,
+    bsp::UartEvent event,
+    bsp::Error result)
+{
+    if (event == bsp::UartEvent::TxComplete &&
+        result == bsp::Error::Ok) {
+        uart_it_done = true;
+    }
+}
+
+static volatile bool uart_rx_done = false;
+static volatile bool uart_rx_error = false;
+
+static std::uint8_t uart_rx_buffer[8]{};
+
+static void uart_rx_callback(
+    void* context,
+    bsp::UartEvent event,
+    bsp::Error result)
+{
+    (void)context;
+
+    if (event == bsp::UartEvent::RxComplete &&
+        result == bsp::Error::Ok) {
+        uart_rx_done = true;
+    }
+
+    if (event == bsp::UartEvent::Error ||
+        result != bsp::Error::Ok) {
+        uart_rx_error = true;
+    }
+}
+
 extern "C" int _write(int file, char *ptr, int len)
 {
     (void)file;
@@ -129,11 +165,105 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
 
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-std::printf("Framework boot OK\r\n");
+
+  /* USART1 DMA TX test (disabled after DMA TX acceptance) */
+#if 0
+static constexpr std::uint8_t dma_tx_message[] =
+    "BSP UART DMA TX OK\r\n";
+
+uart_it_done = false;
+uart1_port.set_callback(uart_it_callback, nullptr);
+
+const bsp::Error dma_tx_result = uart1_port.start_transmit(
+    dma_tx_message,
+    sizeof(dma_tx_message) - 1,
+    bsp::UartTransferMode::Dma
+);
+
+if (dma_tx_result != bsp::Error::Ok) {
+    Error_Handler();
+}
+#endif
+
+//std::printf("Framework boot OK\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  
+// 暂停阻塞发送，单独验证 IT 模式
+/* BSP UART hardware test */
+#if 0
+static constexpr std::uint8_t test_message[] =
+    "BSP UART TX OK\r\n";
+
+const bsp::Error tx_result = uart1_port.transmit(
+    test_message,
+    sizeof(test_message) - 1,
+    100
+);
+
+if (tx_result != bsp::Error::Ok) {
+    Error_Handler();
+}
+#endif
+/* USER CODE BEGIN UART_IT_TEST */
+#if 0
+static constexpr std::uint8_t it_message[] =
+    "BSP UART IT TX OK\r\n";
+
+uart_it_done = false;
+uart1_port.set_callback(uart_it_callback, nullptr);
+
+const bsp::Error it_result = uart1_port.start_transmit(
+    it_message,
+    sizeof(it_message) - 1,
+    bsp::UartTransferMode::Interrupt
+);
+
+if (it_result != bsp::Error::Ok) {
+    Error_Handler();
+}
+#endif
+/* USART1 DMA receive test */
+#if 1
+uart_rx_done = false;
+uart_rx_error = false;
+
+uart1_port.set_callback(uart_rx_callback, nullptr);
+
+const bsp::Error rx_start_result = uart1_port.start_receive(
+    uart_rx_buffer,
+    sizeof(uart_rx_buffer),
+    bsp::UartTransferMode::Dma
+);
+
+if (rx_start_result != bsp::Error::Ok) {
+    Error_Handler();
+}
+#endif
+
+/* USER CODE END UART_IT_TEST */
+// /* BSP UART RX echo test */
+// std::uint8_t rx_buffer[8]{};
+
+// const bsp::Error rx_result = uart1_port.receive(
+//     rx_buffer,
+//     sizeof(rx_buffer),
+//     10000
+// );
+
+// if (rx_result == bsp::Error::Ok) {
+//     static constexpr std::uint8_t prefix[] =
+//         "RX ECHO: ";
+
+//     uart1_port.transmit(prefix, sizeof(prefix) - 1, 100);
+//     uart1_port.transmit(rx_buffer, sizeof(rx_buffer), 100);
+
+//     static constexpr std::uint8_t newline[] = "\r\n";
+//     uart1_port.transmit(newline, sizeof(newline) - 1, 100);
+// }
+
   while (1)
   {
     /* USER CODE END WHILE */
@@ -146,8 +276,8 @@ std::printf("Framework boot OK\r\n");
     if (now - last_tick >= 1000U)
     {
     last_tick = now;
-    std::printf("Heartbeat: %lu ms\r\n",
-                static_cast<unsigned long>(now));
+    //std::printf("Heartbeat: %lu ms\r\n",
+               // static_cast<unsigned long>(now));
     }
   }
   /* USER CODE END 3 */

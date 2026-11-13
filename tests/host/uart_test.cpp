@@ -31,6 +31,10 @@ extern int mock_tx_it_calls;
 extern int mock_tx_dma_calls;
 extern int mock_rx_it_calls;
 extern int mock_rx_dma_calls;
+
+extern HAL_StatusTypeDef mock_abort_status;
+extern int mock_abort_calls;
+
 struct CallbackRecord {
     int tx_complete = 0;
     int rx_complete = 0;
@@ -239,31 +243,39 @@ int main()
     assert(record.errors == 1);
     assert(record.last_error == Error::HardwareFailure);
 
-    // 34: 错误后允许重新发送
+    // 34: 错误后禁止重新发送
     mock_async_tx_status = HAL_OK;
     assert(async_uart.start_transmit(data, 2, Mode::Interrupt)
-           == Error::Ok);
+       == Error::HardwareFailure);
 
-    // 35: 错误后允许重新接收
+    // 35: 错误后禁止重新接收
     mock_async_rx_status = HAL_OK;
     assert(async_uart.start_receive(data, 2, Mode::Dma)
-           == Error::Ok);
+       == Error::HardwareFailure);
 
-    // 36: 再次发生错误
-    async_uart.on_error(Error::Timeout);
-    assert(record.errors == 2);
-    assert(record.last_error == Error::Timeout);
+   // 36: Faulted 状态下重复错误不重复通知
+   async_uart.on_error(Error::Timeout);
 
-    // 37: 无活动传输时不重复通知
-    async_uart.on_error(Error::HardwareFailure);
-    assert(record.errors == 2);
+   assert(record.errors == 1);
+   assert(record.last_error == Error::HardwareFailure);
 
-    // 38: 错误恢复后可以继续发送
-    assert(async_uart.start_transmit(data, 2, Mode::Dma)
-           == Error::Ok);
-    // UART router tests
-    namespace router = port::uart_router;
+   // 37: Faulted 状态下再次错误不重复通知
+   async_uart.on_error(Error::HardwareFailure);
+   assert(record.errors == 1);
+   assert(record.last_error == Error::HardwareFailure);
 
+    // 38: 独立正常实例可以启动 DMA 发送
+    UART_HandleTypeDef fresh_handle{};
+    fresh_handle.gState = HAL_UART_STATE_READY;
+
+    port::Stm32Uart fresh_uart(fresh_handle);
+
+    mock_async_tx_status = HAL_OK;
+    assert(fresh_uart.start_transmit(data, 2, Mode::Dma)
+       == Error::Ok);
+
+    // 完成发送，释放该实例的软件状态
+    fresh_uart.on_tx_complete();
     UART_HandleTypeDef router_handle1{};
     UART_HandleTypeDef router_handle2{};
     UART_HandleTypeDef router_handle3{};
@@ -275,6 +287,9 @@ int main()
     port::Stm32Uart uart3(router_handle3);
     port::Stm32Uart uart4(router_handle4);
     port::Stm32Uart uart5(router_handle5);
+
+    // UART router tests
+    namespace router = port::uart_router;
 
     // 39: Null handle
     assert(router::register_uart(nullptr, &uart1)
@@ -518,7 +533,56 @@ mock_rx_complete_during_start = false;
 assert(router::unregister_uart(
     &early_rx_handle) == Error::Ok);
 
+    // 66–67: Faulted state rejects new transfers
+UART_HandleTypeDef fault_handle{};
+fault_handle.gState = HAL_UART_STATE_READY;
+fault_handle.RxState = HAL_UART_STATE_READY;
 
-    std::cout << "UART HOST TEST: 65 PASS\n";
+port::Stm32Uart fault_uart(fault_handle);
+
+fault_uart.on_error(Error::HardwareFailure);
+
+// 66: TX rejected after fault
+assert(fault_uart.start_transmit(
+    data, 2, Mode::Interrupt)
+    == Error::HardwareFailure);
+
+// 67: RX rejected after fault
+assert(fault_uart.start_receive(
+    data, 2, Mode::Interrupt)
+    == Error::HardwareFailure);
+
+// 68–69: UART recovery tests
+UART_HandleTypeDef recovery_handle{};
+recovery_handle.gState = HAL_UART_STATE_READY;
+recovery_handle.RxState = HAL_UART_STATE_READY;
+
+port::Stm32Uart recovery_uart(recovery_handle);
+recovery_uart.on_error(Error::HardwareFailure);
+
+// 68: Abort failure must keep UART Faulted
+mock_abort_status = HAL_TIMEOUT;
+assert(recovery_uart.recover() == Error::Timeout);
+assert(recovery_uart.start_transmit(
+    data, 2, Mode::Interrupt) == Error::HardwareFailure);
+
+// 69: Successful Abort allows restarting UART
+mock_abort_status = HAL_OK;
+assert(recovery_uart.recover() == Error::Ok);
+
+mock_async_tx_status = HAL_OK;
+assert(recovery_uart.start_transmit(
+    data, 2, Mode::Interrupt) == Error::Ok);
+
+recovery_uart.on_tx_complete();
+
+// 70: Recovering an already healthy UART is rejected
+const int abort_before = mock_abort_calls;
+
+assert(recovery_uart.recover() == Error::Busy);
+assert(mock_abort_calls == abort_before);
+
+
+    std::cout << "UART HOST TEST: 70 PASS\n";
     return 0;
 }

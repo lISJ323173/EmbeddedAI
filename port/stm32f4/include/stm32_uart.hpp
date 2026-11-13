@@ -44,13 +44,18 @@ public:
     void on_tx_complete() noexcept;
     void on_rx_complete() noexcept;
     void on_error(bsp::Error error) noexcept;
+    // Must be called outside interrupt context.
+    // The caller must exclusively own this UART instance.
+    bsp::Error recover() noexcept;
 private:
     UART_HandleTypeDef& handle_;
         enum class TransferState : std::uint8_t {
         Idle,
         Starting,
         Busy,
-        CompletedEarly
+        CompletedEarly,
+        Faulted,
+        Recovering
     };
 
    std::atomic<TransferState> tx_state_{TransferState::Idle};

@@ -85,3 +85,19 @@ extern "C" HAL_StatusTypeDef HAL_UART_Receive_DMA(
     ++mock_rx_dma_calls;
     return mock_async_rx_status;
 }
+
+HAL_StatusTypeDef mock_abort_status = HAL_OK;
+int mock_abort_calls = 0;
+
+extern "C" HAL_StatusTypeDef HAL_UART_Abort(
+    UART_HandleTypeDef* huart)
+{
+    ++mock_abort_calls;
+
+    if (mock_abort_status == HAL_OK) {
+        huart->gState = HAL_UART_STATE_READY;
+        huart->RxState = HAL_UART_STATE_READY;
+    }
+
+    return mock_abort_status;
+}

@@ -70,9 +70,12 @@ bsp::Error Stm32Uart::start_transmit(
         return bsp::Error::NotInitialized;
 
   TransferState expected = TransferState::Idle;
+
 if (!tx_state_.compare_exchange_strong(
         expected, TransferState::Starting)) {
-    return bsp::Error::Busy;
+    return expected == TransferState::Faulted
+        ? bsp::Error::HardwareFailure
+        : bsp::Error::Busy;
 }
 
 HAL_StatusTypeDef status;
@@ -91,7 +94,19 @@ default:
 }
 
 if (status != HAL_OK) {
-    tx_state_.store(TransferState::Idle);
+    expected = TransferState::Starting;
+
+    if (!tx_state_.compare_exchange_strong(
+            expected, TransferState::Idle)) {
+        if (expected != TransferState::CompletedEarly)
+            return bsp::Error::HardwareFailure;
+
+        expected = TransferState::CompletedEarly;
+        if (!tx_state_.compare_exchange_strong(
+                expected, TransferState::Idle))
+            return bsp::Error::HardwareFailure;
+    }
+
     return map_status(status);
 }
 
@@ -123,9 +138,12 @@ bsp::Error Stm32Uart::start_receive(
         return bsp::Error::NotInitialized;
 
     TransferState expected = TransferState::Idle;
+
 if (!rx_state_.compare_exchange_strong(
         expected, TransferState::Starting)) {
-    return bsp::Error::Busy;
+    return expected == TransferState::Faulted
+        ? bsp::Error::HardwareFailure
+        : bsp::Error::Busy;
 }
 
 HAL_StatusTypeDef status;
@@ -144,7 +162,19 @@ default:
 }
 
 if (status != HAL_OK) {
-    rx_state_.store(TransferState::Idle);
+    expected = TransferState::Starting;
+
+    if (!rx_state_.compare_exchange_strong(
+            expected, TransferState::Idle)) {
+        if (expected != TransferState::CompletedEarly)
+            return bsp::Error::HardwareFailure;
+
+        expected = TransferState::CompletedEarly;
+        if (!rx_state_.compare_exchange_strong(
+                expected, TransferState::Idle))
+            return bsp::Error::HardwareFailure;
+    }
+
     return map_status(status);
 }
 
@@ -213,21 +243,57 @@ void Stm32Uart::on_rx_complete() noexcept
 
 void Stm32Uart::on_error(bsp::Error error) noexcept
 {
-    // 临时策略：错误发生时结束所有正在进行的传输
+    const auto tx_previous =
+        tx_state_.exchange(TransferState::Faulted);
+
+    const auto rx_previous =
+        rx_state_.exchange(TransferState::Faulted);
+
+    const auto was_active = [](TransferState state) {
+        return state == TransferState::Starting ||
+               state == TransferState::Busy ||
+               state == TransferState::CompletedEarly;
+    };
+
     const bool active =
-        tx_state_ == TransferState::Busy ||
-        rx_state_ == TransferState::Busy;
+        was_active(tx_previous) || was_active(rx_previous);
 
-   tx_state_.store(
-    TransferState::Idle,
-    std::memory_order_release);
-   rx_state_.store(
-    TransferState::Idle,
-    std::memory_order_release);
-
-    if (active && callback_)
+    if (active && callback_) {
         callback_(callback_context_,
                   bsp::UartEvent::Error,
                   error);
+    }
 }
-} // namespace port
+
+bsp::Error Stm32Uart::recover() noexcept
+{
+    TransferState expected = TransferState::Faulted;
+
+    if (!tx_state_.compare_exchange_strong(
+            expected, TransferState::Recovering)) {
+        return bsp::Error::Busy;
+    }
+
+    expected = TransferState::Faulted;
+    if (!rx_state_.compare_exchange_strong(
+            expected, TransferState::Recovering)) {
+        tx_state_.store(TransferState::Faulted);
+        return bsp::Error::Busy;
+    }
+
+    const HAL_StatusTypeDef status =
+        HAL_UART_Abort(&handle_);
+
+    if (status != HAL_OK) {
+        tx_state_.store(TransferState::Faulted);
+        rx_state_.store(TransferState::Faulted);
+        return map_status(status);
+    }
+
+    tx_state_.store(TransferState::Idle);
+    rx_state_.store(TransferState::Idle);
+
+    return bsp::Error::Ok;
+}
+
+}// namespace port
