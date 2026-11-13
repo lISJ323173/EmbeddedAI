@@ -241,6 +241,29 @@ const bsp::Error rx_start_result = uart1_port.start_receive(
 if (rx_start_result != bsp::Error::Ok) {
     Error_Handler();
 }
+
+#if 0
+// 等待接收错误，回调只更新标志。
+while (!uart_rx_error) {
+}
+
+const bsp::Error recover_result = uart1_port.recover();
+if (recover_result != bsp::Error::Ok) {
+    Error_Handler();
+}
+
+uart_rx_done = false;
+uart_rx_error = false;
+
+const bsp::Error rx_restart_result = uart1_port.start_receive(
+    uart_rx_buffer,
+    sizeof(uart_rx_buffer),
+    bsp::UartTransferMode::Dma
+);
+if (rx_restart_result != bsp::Error::Ok) {
+    Error_Handler();
+}
+#endif
 #endif
 
 /* USER CODE END UART_IT_TEST */
