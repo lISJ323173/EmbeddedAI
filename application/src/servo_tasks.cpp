@@ -1,5 +1,6 @@
 #include "application/servo_tasks.hpp"
 #include "device/servo_command_parser.hpp"
+#include "module/servo_command_state.hpp"
 
 namespace application {
 
@@ -55,6 +56,7 @@ void servo_rx_task(void* argument)
 void servo_output_task(void* argument)
 {
     auto& context = *static_cast<ServoOutputContext*>(argument);
+    module::ServoCommandState command_state{5U * osKernelGetTickFreq()};
 
     for (;;) {
         std::int32_t command{};
@@ -65,10 +67,17 @@ void servo_output_task(void* argument)
             if (context.servo.set_position_percent(command) != bsp::Error::Ok) {
                 context.on_failure();
             }
+            command_state.accept(osKernelGetTickCount());
             ++servo_output_applied;
             servo_output_stack_free_bytes = osThreadGetStackSpace(osThreadGetId());
         } else if (status != osErrorTimeout) {
             context.on_failure();
+        }
+
+        if (command_state.should_center(osKernelGetTickCount())) {
+            if (context.servo.set_position_percent(50) != bsp::Error::Ok) {
+                context.on_failure();
+            }
         }
 
         if (!context.suppress_alive) {

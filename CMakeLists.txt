@@ -103,6 +103,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/port/stm32f4/include
     ${CMAKE_CURRENT_SOURCE_DIR}/device/include
     ${CMAKE_CURRENT_SOURCE_DIR}/application/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/module/include
 )
 
 # Add project symbols (macros)
