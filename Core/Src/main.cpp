@@ -28,7 +28,7 @@
 #include "stm32_i2c.hpp"
 #include "stm32_pwm.hpp"
 #include "device/sg90.hpp"
-#include "device/servo_command_parser.hpp"
+#include "application/servo_tasks.hpp"
 #include "device/mpu6050.hpp"
 #include "cmsis_os2.h"
 /* USER CODE END Includes */
@@ -178,21 +178,13 @@ extern "C" void HAL_I2C_ErrorCallback(I2C_HandleTypeDef* hi2c)
     i2c1_port.on_read_error(hi2c);
 }
 
-static constexpr std::uint32_t rx_alive = 1U << 0;
-static constexpr std::uint32_t output_alive = 1U << 1;
-static constexpr std::uint32_t required_alive = rx_alive | output_alive;
+static constexpr std::uint32_t required_alive =
+    application::rx_alive | application::output_alive;
 static constexpr bool inject_output_miss = false;
 
 static osEventFlagsId_t servo_alive_events = nullptr;
 static volatile std::uint32_t servo_health_windows = 0U;
 static volatile std::uint32_t servo_health_missing = 0U;
-
-static void report_servo_alive(std::uint32_t flag)
-{
-    if ((osEventFlagsSet(servo_alive_events, flag) & osFlagsError) != 0U) {
-        Error_Handler();
-    }
-}
 
 static void servo_health_task(void*)
 {
@@ -231,81 +223,6 @@ static void servo_health_task(void*)
     }
 }
 
-struct ServoRxContext {
-    bsp::IUart& uart;
-    osMessageQueueId_t commands;
-};
-
-struct ServoOutputContext {
-    device::Sg90& servo;
-    osMessageQueueId_t commands;
-};
-
-static volatile std::uint32_t servo_rx_enqueued = 0U;
-static volatile std::uint32_t servo_output_applied = 0U;
-static volatile std::uint32_t servo_rx_stack_free_bytes = 0U;
-static volatile std::uint32_t servo_output_stack_free_bytes = 0U;
-
-static void servo_rx_task(void* argument)
-{
-    auto& context = *static_cast<ServoRxContext*>(argument);
-    device::ServoCommandParser parser;
-    unsigned position = 50U;
-
-    for (;;) {
-        std::uint8_t byte{};
-        const auto status = context.uart.receive(&byte, 1U, 10U);
-        if (status == bsp::Error::Ok || status == bsp::Error::Timeout) {
-            report_servo_alive(rx_alive);
-        }
-        if (status == bsp::Error::Timeout) {
-            static std::uint32_t last_sampled_count = 0U;
-            const auto count = servo_rx_enqueued;
-            if (servo_rx_stack_free_bytes == 0U ||
-                count - last_sampled_count >= 4U) {
-                servo_rx_stack_free_bytes = osThreadGetStackSpace(osThreadGetId());
-                last_sampled_count = count;
-            }
-            osDelay(1U);
-            continue;
-        }
-        if (status != bsp::Error::Ok) {
-            Error_Handler();
-        }
-        if (parser.push(static_cast<char>(byte), position)) {
-            const auto command = static_cast<std::int32_t>(position);
-            if (osMessageQueuePut(context.commands, &command, 0U, 0U) != osOK) {
-                Error_Handler();
-            }
-            ++servo_rx_enqueued;
-        }
-    }
-}
-
-static void servo_output_task(void* argument)
-{
-    auto& context = *static_cast<ServoOutputContext*>(argument);
-
-    for (;;) {
-        std::int32_t command{};
-        const auto status = osMessageQueueGet(
-            context.commands, &command, nullptr, 100U);
-
-        if (status == osOK) {
-            if (context.servo.set_position_percent(command) != bsp::Error::Ok) {
-                Error_Handler();
-            }
-            ++servo_output_applied;
-            servo_output_stack_free_bytes = osThreadGetStackSpace(osThreadGetId());
-        } else if (status != osErrorTimeout) {
-            Error_Handler();
-        }
-
-        if (!inject_output_miss) {
-            report_servo_alive(output_alive);
-        }
-    }
-}
 /* USER CODE END 0 */
 
 /**
@@ -633,8 +550,12 @@ if (rx_restart_result != bsp::Error::Ok) {
       Error_Handler();
   }
 
-  static ServoRxContext rx_context{uart1_port, commands};
-  static ServoOutputContext output_context{servo, commands};
+  static application::ServoRxContext rx_context{
+      uart1_port, commands, servo_alive_events, Error_Handler
+  };
+  static application::ServoOutputContext output_context{
+      servo, commands, servo_alive_events, Error_Handler, inject_output_miss
+  };
 
   osThreadAttr_t rx_attributes{};
   rx_attributes.name = "servo_rx";
@@ -646,8 +567,8 @@ if (rx_restart_result != bsp::Error::Ok) {
   output_attributes.priority = osPriorityAboveNormal;
   output_attributes.stack_size = 1024U;
 
-  if (osThreadNew(servo_rx_task, &rx_context, &rx_attributes) == nullptr ||
-      osThreadNew(servo_output_task, &output_context, &output_attributes) == nullptr) {
+  if (osThreadNew(application::servo_rx_task, &rx_context, &rx_attributes) == nullptr ||
+      osThreadNew(application::servo_output_task, &output_context, &output_attributes) == nullptr) {
       Error_Handler();
   }
 

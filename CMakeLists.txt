@@ -96,11 +96,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     port/stm32f4/src/stm32_pwm.cpp
     Core/Src/stm32f4xx_hal_timebase_tim.c
     device/src/mpu6050.cpp
+    application/src/servo_tasks.cpp
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/port/stm32f4/include
     ${CMAKE_CURRENT_SOURCE_DIR}/device/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/application/include
 )
 
 # Add project symbols (macros)
