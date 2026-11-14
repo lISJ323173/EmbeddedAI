@@ -1,5 +1,5 @@
 #include "application/servo_tasks.hpp"
-#include "device/servo_command_parser.hpp"
+#include "device/checked_servo_command_parser.hpp"
 #include "module/servo_command_state.hpp"
 
 namespace application {
@@ -20,7 +20,7 @@ static void report_alive(osEventFlagsId_t events, std::uint32_t flag,
 void servo_rx_task(void* argument)
 {
     auto& context = *static_cast<ServoRxContext*>(argument);
-    device::ServoCommandParser parser;
+    device::CheckedServoCommandParser parser;
     unsigned position = 50U;
 
     for (;;) {
@@ -43,7 +43,8 @@ void servo_rx_task(void* argument)
         if (status != bsp::Error::Ok) {
             context.on_failure();
         }
-        if (parser.push(static_cast<char>(byte), position)) {
+        const auto parse_result = parser.push(byte, position);
+        if (parse_result == bsp::Error::Ok) {
             const auto command = static_cast<std::int32_t>(position);
             if (osMessageQueuePut(context.commands, &command, 0U, 0U) != osOK) {
                 context.on_failure();
