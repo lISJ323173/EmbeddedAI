@@ -62,6 +62,9 @@ extern "C" {
 
 TIM_HandleTypeDef htim3;
 
+static IWDG_HandleTypeDef hiwdg{};
+static volatile std::uint32_t boot_reset_csr = 0U;
+
 static port::Stm32I2c i2c1_port(hi2c1);
 
 static std::uint8_t i2c_it_value = 0xFF;
@@ -175,6 +178,59 @@ extern "C" void HAL_I2C_ErrorCallback(I2C_HandleTypeDef* hi2c)
     i2c1_port.on_read_error(hi2c);
 }
 
+static constexpr std::uint32_t rx_alive = 1U << 0;
+static constexpr std::uint32_t output_alive = 1U << 1;
+static constexpr std::uint32_t required_alive = rx_alive | output_alive;
+static constexpr bool inject_output_miss = false;
+
+static osEventFlagsId_t servo_alive_events = nullptr;
+static volatile std::uint32_t servo_health_windows = 0U;
+static volatile std::uint32_t servo_health_missing = 0U;
+
+static void report_servo_alive(std::uint32_t flag)
+{
+    if ((osEventFlagsSet(servo_alive_events, flag) & osFlagsError) != 0U) {
+        Error_Handler();
+    }
+}
+
+static void servo_health_task(void*)
+{
+    hiwdg.Instance = IWDG;
+    hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
+    hiwdg.Init.Reload = 1499U;
+    if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
+        Error_Handler();
+    }
+
+    constexpr std::uint32_t window_ticks = 500U;
+    auto deadline = osKernelGetTickCount();
+
+    for (;;) {
+        deadline += window_ticks;
+        if (osDelayUntil(deadline) != osOK) {
+            Error_Handler();
+        }
+
+        const auto seen = osEventFlagsClear(servo_alive_events, required_alive);
+        if ((seen & osFlagsError) != 0U) {
+            Error_Handler();
+        }
+
+        servo_health_missing = required_alive & ~seen;
+        if (servo_health_missing != 0U) {
+            for (;;) {
+                osDelay(100U);
+            }
+        }
+
+        if (HAL_IWDG_Refresh(&hiwdg) != HAL_OK) {
+            Error_Handler();
+        }
+        ++servo_health_windows;
+    }
+}
+
 struct ServoRxContext {
     bsp::IUart& uart;
     osMessageQueueId_t commands;
@@ -187,6 +243,8 @@ struct ServoOutputContext {
 
 static volatile std::uint32_t servo_rx_enqueued = 0U;
 static volatile std::uint32_t servo_output_applied = 0U;
+static volatile std::uint32_t servo_rx_stack_free_bytes = 0U;
+static volatile std::uint32_t servo_output_stack_free_bytes = 0U;
 
 static void servo_rx_task(void* argument)
 {
@@ -197,7 +255,17 @@ static void servo_rx_task(void* argument)
     for (;;) {
         std::uint8_t byte{};
         const auto status = context.uart.receive(&byte, 1U, 10U);
+        if (status == bsp::Error::Ok || status == bsp::Error::Timeout) {
+            report_servo_alive(rx_alive);
+        }
         if (status == bsp::Error::Timeout) {
+            static std::uint32_t last_sampled_count = 0U;
+            const auto count = servo_rx_enqueued;
+            if (servo_rx_stack_free_bytes == 0U ||
+                count - last_sampled_count >= 4U) {
+                servo_rx_stack_free_bytes = osThreadGetStackSpace(osThreadGetId());
+                last_sampled_count = count;
+            }
             osDelay(1U);
             continue;
         }
@@ -220,12 +288,22 @@ static void servo_output_task(void* argument)
 
     for (;;) {
         std::int32_t command{};
-        if (osMessageQueueGet(context.commands, &command, nullptr,
-                              osWaitForever) != osOK ||
-            context.servo.set_position_percent(command) != bsp::Error::Ok) {
+        const auto status = osMessageQueueGet(
+            context.commands, &command, nullptr, 100U);
+
+        if (status == osOK) {
+            if (context.servo.set_position_percent(command) != bsp::Error::Ok) {
+                Error_Handler();
+            }
+            ++servo_output_applied;
+            servo_output_stack_free_bytes = osThreadGetStackSpace(osThreadGetId());
+        } else if (status != osErrorTimeout) {
             Error_Handler();
         }
-        ++servo_output_applied;
+
+        if (!inject_output_miss) {
+            report_servo_alive(output_alive);
+        }
     }
 }
 /* USER CODE END 0 */
@@ -238,7 +316,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  boot_reset_csr = RCC->CSR;
+  __HAL_RCC_CLEAR_RESET_FLAGS();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -544,6 +623,11 @@ if (rx_restart_result != bsp::Error::Ok) {
       Error_Handler();
   }
 
+  servo_alive_events = osEventFlagsNew(nullptr);
+  if (servo_alive_events == nullptr) {
+      Error_Handler();
+  }
+
   const auto commands = osMessageQueueNew(4U, sizeof(std::int32_t), nullptr);
   if (commands == nullptr) {
       Error_Handler();
@@ -564,6 +648,15 @@ if (rx_restart_result != bsp::Error::Ok) {
 
   if (osThreadNew(servo_rx_task, &rx_context, &rx_attributes) == nullptr ||
       osThreadNew(servo_output_task, &output_context, &output_attributes) == nullptr) {
+      Error_Handler();
+  }
+
+  osThreadAttr_t health_attributes{};
+  health_attributes.name = "servo_health";
+  health_attributes.priority = osPriorityHigh;
+  health_attributes.stack_size = 1024U;
+
+  if (osThreadNew(servo_health_task, nullptr, &health_attributes) == nullptr) {
       Error_Handler();
   }
 
