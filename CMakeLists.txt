@@ -69,10 +69,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     port/stm32f4/src/stm32_uart.cpp
     port/stm32f4/src/stm32_can.cpp
     port/stm32f4/src/stm32_i2c.cpp
+    device/src/mpu6050.cpp
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/port/stm32f4/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/device/include
 )
 
 # Add project symbols (macros)

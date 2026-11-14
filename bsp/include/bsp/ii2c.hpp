@@ -15,6 +15,11 @@ public:
                                 std::uint8_t* data,
                                 std::size_t size,
                                 std::uint32_t timeout_ms) noexcept = 0;
+
+    virtual Error write_register(std::uint8_t address_7bit,
+                                 std::uint8_t reg,
+                                 std::uint8_t value,
+                                 std::uint32_t timeout_ms) noexcept = 0;
 };
 
 class II2cAsync {

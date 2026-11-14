@@ -27,3 +27,19 @@ target_compile_options(uart_test PRIVATE
 )
 
 add_test(NAME uart_error_tests COMMAND uart_test)
+
+add_executable(mpu6050_test
+    mpu6050_test.cpp
+    ../../device/src/mpu6050.cpp
+)
+
+target_include_directories(mpu6050_test PRIVATE
+    ../../bsp/include
+    ../../device/include
+)
+
+target_compile_options(mpu6050_test PRIVATE
+    -Wall -Wextra -Werror -UNDEBUG
+)
+
+add_test(NAME mpu6050_probe_tests COMMAND mpu6050_test)

@@ -26,6 +26,7 @@
 #include "uart_callback_router.hpp"
 #include "stm32_can.hpp"
 #include "stm32_i2c.hpp"
+#include "device/mpu6050.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -64,6 +65,9 @@ static unsigned i2c_it_pass_count = 0;
 static std::uint8_t mpu_who_am_i = 0xFF;
 static bsp::Error i2c_read_result = bsp::Error::HardwareFailure;
 static bsp::Error i2c_bad_address_result = bsp::Error::HardwareFailure;
+
+static std::uint8_t imu_probe_id = 0xFF;
+static bsp::Error imu_probe_result = bsp::Error::HardwareFailure;
 
 /* Kept at file scope so the debugger can resolve them at the RX check. */
 static bsp::CanFrame can_rx_frame{};
@@ -259,6 +263,15 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
           Error_Handler();
       }
       ++i2c_it_pass_count;
+  }
+
+  device::Mpu6050 imu(i2c1, 0x68U);
+  imu_probe_result = imu.probe(imu_probe_id, 100U);
+
+  // 当前模块的设备层验收：读到已知的身份不匹配值。
+  if (imu_probe_result != bsp::Error::Unsupported ||
+      imu_probe_id != 0x74U) {
+      Error_Handler();
   }
 
   MX_CAN1_Init();
