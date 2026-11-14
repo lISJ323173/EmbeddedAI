@@ -28,6 +28,7 @@
 #include "stm32_i2c.hpp"
 #include "stm32_pwm.hpp"
 #include "device/sg90.hpp"
+#include "device/servo_command_parser.hpp"
 #include "device/mpu6050.hpp"
 /* USER CODE END Includes */
 
@@ -409,7 +410,7 @@ if (it_result != bsp::Error::Ok) {
 }
 #endif
 /* USART1 DMA receive test */
-#if 1
+#if 0
 uart_rx_done = false;
 uart_rx_error = false;
 
@@ -480,24 +481,34 @@ if (rx_restart_result != bsp::Error::Ok) {
 
   device::Sg90 servo(pwm);
 
-  constexpr std::int32_t test_positions[] = {50, 0, 100, 50};
-  for (const auto position : test_positions) {
-      if (servo.set_position_percent(position) != bsp::Error::Ok) {
-          Error_Handler();
-      }
-      HAL_Delay(800);
-  }
-
-  if (servo.set_position_percent(-1) != bsp::Error::InvalidArgument ||
-      servo.set_position_percent(101) != bsp::Error::InvalidArgument) {
+  if (servo.set_position_percent(50) != bsp::Error::Ok) {
       Error_Handler();
   }
+
+  device::ServoCommandParser servo_parser;
+  unsigned servo_position = 50U;
 
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    std::uint8_t byte{};
+    const auto rx_result = uart1_port.receive(&byte, 1U, 10U);
+
+    if (rx_result == bsp::Error::Ok) {
+        if (servo_parser.push(static_cast<char>(byte), servo_position)) {
+            const auto servo_result = servo.set_position_percent(
+                static_cast<std::int32_t>(servo_position));
+            if (servo_result != bsp::Error::Ok) {
+                Error_Handler();
+            }
+        }
+    } else if (rx_result != bsp::Error::Timeout) {
+        servo_parser = {};
+        Error_Handler();
+    }
+
     static uint32_t last_tick = 0;
 
     uint32_t now = HAL_GetTick();
