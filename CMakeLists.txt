@@ -54,6 +54,8 @@ target_sources(STM32_Drivers PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_can.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_i2c.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_i2c_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_tim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_tim_ex.c
 )
 
 # Link directories setup
@@ -69,6 +71,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     port/stm32f4/src/stm32_uart.cpp
     port/stm32f4/src/stm32_can.cpp
     port/stm32f4/src/stm32_i2c.cpp
+    port/stm32f4/src/stm32_pwm.cpp
     device/src/mpu6050.cpp
 )
 

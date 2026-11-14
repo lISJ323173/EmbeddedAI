@@ -26,6 +26,8 @@
 #include "uart_callback_router.hpp"
 #include "stm32_can.hpp"
 #include "stm32_i2c.hpp"
+#include "stm32_pwm.hpp"
+#include "device/sg90.hpp"
 #include "device/mpu6050.hpp"
 /* USER CODE END Includes */
 
@@ -55,6 +57,8 @@ extern "C" {
 extern "C" {
     I2C_HandleTypeDef hi2c1;
 }
+
+TIM_HandleTypeDef htim3;
 
 static port::Stm32I2c i2c1_port(hi2c1);
 
@@ -86,6 +90,8 @@ static void MX_USART1_UART_Init(void);
 static void MX_DMA_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_I2C1_Init(void);
+extern "C" void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim);
+static void MX_TIM3_Init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -464,6 +470,29 @@ if (rx_restart_result != bsp::Error::Ok) {
 //     uart1_port.transmit(newline, sizeof(newline) - 1, 100);
 // }
 
+  MX_TIM3_Init();
+  port::Stm32PwmCh1 pwm_port(htim3);
+  bsp::IPwm& pwm = pwm_port;
+
+  if (pwm.start() != bsp::Error::Ok) {
+      Error_Handler();
+  }
+
+  device::Sg90 servo(pwm);
+
+  constexpr std::int32_t test_positions[] = {50, 0, 100, 50};
+  for (const auto position : test_positions) {
+      if (servo.set_position_percent(position) != bsp::Error::Ok) {
+          Error_Handler();
+      }
+      HAL_Delay(800);
+  }
+
+  if (servo.set_position_percent(-1) != bsp::Error::InvalidArgument ||
+      servo.set_position_percent(101) != bsp::Error::InvalidArgument) {
+      Error_Handler();
+  }
+
   while (1)
   {
     /* USER CODE END WHILE */
@@ -640,6 +669,43 @@ static void MX_I2C1_Init(void)
     if (HAL_I2C_Init(&hi2c1) != HAL_OK) {
         Error_Handler();
     }
+}
+
+static void MX_TIM3_Init(void)
+{
+    TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+    TIM_MasterConfigTypeDef sMasterConfig = {0};
+    TIM_OC_InitTypeDef sConfigOC = {0};
+
+    htim3.Instance = TIM3;
+    htim3.Init.Prescaler = 83;
+    htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim3.Init.Period = 19999;
+    htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+    if (HAL_TIM_Base_Init(&htim3) != HAL_OK) {
+        Error_Handler();
+    }
+    sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+    if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_TIM_PWM_Init(&htim3) != HAL_OK) {
+        Error_Handler();
+    }
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK) {
+        Error_Handler();
+    }
+    sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    sConfigOC.Pulse = 1500;
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+    if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) {
+        Error_Handler();
+    }
+    HAL_TIM_MspPostInit(&htim3);
 }
 /* USER CODE END 4 */
 
