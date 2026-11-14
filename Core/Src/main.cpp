@@ -175,35 +175,57 @@ extern "C" void HAL_I2C_ErrorCallback(I2C_HandleTypeDef* hi2c)
     i2c1_port.on_read_error(hi2c);
 }
 
-struct ServoTaskContext {
+struct ServoRxContext {
     bsp::IUart& uart;
-    device::Sg90& servo;
+    osMessageQueueId_t commands;
 };
 
-static volatile std::uint32_t servo_task_loops = 0U;
+struct ServoOutputContext {
+    device::Sg90& servo;
+    osMessageQueueId_t commands;
+};
 
-static void servo_task(void* argument)
+static volatile std::uint32_t servo_rx_enqueued = 0U;
+static volatile std::uint32_t servo_output_applied = 0U;
+
+static void servo_rx_task(void* argument)
 {
-    auto& context = *static_cast<ServoTaskContext*>(argument);
+    auto& context = *static_cast<ServoRxContext*>(argument);
     device::ServoCommandParser parser;
     unsigned position = 50U;
 
     for (;;) {
-        ++servo_task_loops;
-
         std::uint8_t byte{};
         const auto status = context.uart.receive(&byte, 1U, 10U);
-        if (status == bsp::Error::Ok) {
-            if (parser.push(static_cast<char>(byte), position) &&
-                context.servo.set_position_percent(
-                    static_cast<std::int32_t>(position)) != bsp::Error::Ok) {
-                Error_Handler();
-            }
-        } else if (status == bsp::Error::Timeout) {
+        if (status == bsp::Error::Timeout) {
             osDelay(1U);
-        } else {
+            continue;
+        }
+        if (status != bsp::Error::Ok) {
             Error_Handler();
         }
+        if (parser.push(static_cast<char>(byte), position)) {
+            const auto command = static_cast<std::int32_t>(position);
+            if (osMessageQueuePut(context.commands, &command, 0U, 0U) != osOK) {
+                Error_Handler();
+            }
+            ++servo_rx_enqueued;
+        }
+    }
+}
+
+static void servo_output_task(void* argument)
+{
+    auto& context = *static_cast<ServoOutputContext*>(argument);
+
+    for (;;) {
+        std::int32_t command{};
+        if (osMessageQueueGet(context.commands, &command, nullptr,
+                              osWaitForever) != osOK ||
+            context.servo.set_position_percent(command) != bsp::Error::Ok) {
+            Error_Handler();
+        }
+        ++servo_output_applied;
     }
 }
 /* USER CODE END 0 */
@@ -518,18 +540,30 @@ if (rx_restart_result != bsp::Error::Ok) {
       Error_Handler();
   }
 
-  static ServoTaskContext servo_context{uart1_port, servo};
-
   if (osKernelInitialize() != osOK) {
       Error_Handler();
   }
 
-  osThreadAttr_t attributes{};
-  attributes.name = "servo_rx";
-  attributes.priority = osPriorityNormal;
-  attributes.stack_size = 1024U;
+  const auto commands = osMessageQueueNew(4U, sizeof(std::int32_t), nullptr);
+  if (commands == nullptr) {
+      Error_Handler();
+  }
 
-  if (osThreadNew(servo_task, &servo_context, &attributes) == nullptr) {
+  static ServoRxContext rx_context{uart1_port, commands};
+  static ServoOutputContext output_context{servo, commands};
+
+  osThreadAttr_t rx_attributes{};
+  rx_attributes.name = "servo_rx";
+  rx_attributes.priority = osPriorityNormal;
+  rx_attributes.stack_size = 1024U;
+
+  osThreadAttr_t output_attributes{};
+  output_attributes.name = "servo_output";
+  output_attributes.priority = osPriorityAboveNormal;
+  output_attributes.stack_size = 1024U;
+
+  if (osThreadNew(servo_rx_task, &rx_context, &rx_attributes) == nullptr ||
+      osThreadNew(servo_output_task, &output_context, &output_attributes) == nullptr) {
       Error_Handler();
   }
 
