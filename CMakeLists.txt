@@ -72,6 +72,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     port/stm32f4/src/stm32_can.cpp
     port/stm32f4/src/stm32_i2c.cpp
     port/stm32f4/src/stm32_pwm.cpp
+    Core/Src/stm32f4xx_hal_timebase_tim.c
     device/src/mpu6050.cpp
 )
 

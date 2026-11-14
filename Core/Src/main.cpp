@@ -718,6 +718,13 @@ static void MX_TIM3_Init(void)
     }
     HAL_TIM_MspPostInit(&htim3);
 }
+
+extern "C" void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
+{
+    if (htim->Instance == TIM6) {
+        HAL_IncTick();
+    }
+}
 /* USER CODE END 4 */
 
 /**
