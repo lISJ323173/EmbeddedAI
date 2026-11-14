@@ -25,6 +25,7 @@
 #include "stm32_uart.hpp"
 #include "uart_callback_router.hpp"
 #include "stm32_can.hpp"
+#include "stm32_i2c.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,6 +51,20 @@ extern "C" {
     CAN_HandleTypeDef hcan1;
 }
 
+extern "C" {
+    I2C_HandleTypeDef hi2c1;
+}
+
+static port::Stm32I2c i2c1_port(hi2c1);
+
+static std::uint8_t i2c_it_value = 0xFF;
+static bsp::Error i2c_it_result = bsp::Error::Busy;
+static unsigned i2c_it_pass_count = 0;
+
+static std::uint8_t mpu_who_am_i = 0xFF;
+static bsp::Error i2c_read_result = bsp::Error::HardwareFailure;
+static bsp::Error i2c_bad_address_result = bsp::Error::HardwareFailure;
+
 /* Kept at file scope so the debugger can resolve them at the RX check. */
 static bsp::CanFrame can_rx_frame{};
 
@@ -66,6 +81,7 @@ static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static void MX_DMA_Init(void);
 static void MX_CAN1_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -136,6 +152,16 @@ extern "C" int _write(int file, char *ptr, int len)
 
     return (status == HAL_OK) ? len : -1;
 }
+
+extern "C" void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef* hi2c)
+{
+    i2c1_port.on_read_complete(hi2c);
+}
+
+extern "C" void HAL_I2C_ErrorCallback(I2C_HandleTypeDef* hi2c)
+{
+    i2c1_port.on_read_error(hi2c);
+}
 /* USER CODE END 0 */
 
 /**
@@ -181,6 +207,60 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
 
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  MX_I2C1_Init();
+  HAL_Delay(200);
+
+  bsp::II2c& i2c1 = i2c1_port;
+
+  i2c_read_result = i2c1.read_register(0x68, 0x75, &mpu_who_am_i, 1, 100U);
+  if (i2c_read_result != bsp::Error::Ok) {
+      Error_Handler();
+  }
+
+  std::uint8_t scratch{};
+  i2c_bad_address_result = i2c1.read_register(0xD0, 0x75, &scratch, 1, 100U);
+  if (i2c_bad_address_result != bsp::Error::InvalidArgument) {
+      Error_Handler();
+  }
+
+  HAL_NVIC_SetPriority(I2C1_EV_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(I2C1_ER_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(I2C1_EV_IRQn);
+  HAL_NVIC_EnableIRQ(I2C1_ER_IRQn);
+
+  bsp::II2cAsync& i2c1_async = i2c1_port;
+  i2c_it_pass_count = 0;
+
+  for (unsigned attempt = 0; attempt < 2; ++attempt) {
+      i2c_it_value = 0xFF;
+      if (i2c1_async.start_read_register(0x68, 0x75, &i2c_it_value, 1U)
+          != bsp::Error::Ok) {
+          Error_Handler();
+      }
+
+      std::uint8_t scratch_byte{};
+      if (i2c1_async.start_read_register(0x68, 0x75, &scratch_byte, 1U)
+          != bsp::Error::Busy ||
+          i2c1.read_register(0x68, 0x75, &scratch_byte, 1U, 100U)
+          != bsp::Error::Busy) {
+          Error_Handler();
+      }
+
+      const auto started_at = HAL_GetTick();
+      do {
+          i2c_it_result = i2c1_async.poll_read_result();
+          if (i2c_it_result == bsp::Error::Busy &&
+              HAL_GetTick() - started_at >= 100U) {
+              Error_Handler();
+          }
+      } while (i2c_it_result == bsp::Error::Busy);
+
+      if (i2c_it_result != bsp::Error::Ok || i2c_it_value != mpu_who_am_i) {
+          Error_Handler();
+      }
+      ++i2c_it_pass_count;
+  }
+
   MX_CAN1_Init();
 
   /* CAN1 internal loopback: transmit once, read the frame back from FIFO0. */
@@ -529,6 +609,22 @@ static void MX_CAN1_Init(void)
     hcan1.Init.TransmitFifoPriority = DISABLE;
 
     if (HAL_CAN_Init(&hcan1) != HAL_OK) {
+        Error_Handler();
+    }
+}
+
+static void MX_I2C1_Init(void)
+{
+    hi2c1.Instance = I2C1;
+    hi2c1.Init.ClockSpeed = 100000;
+    hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+    hi2c1.Init.OwnAddress1 = 0;
+    hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+    hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+    hi2c1.Init.OwnAddress2 = 0;
+    hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+    hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+    if (HAL_I2C_Init(&hi2c1) != HAL_OK) {
         Error_Handler();
     }
 }
