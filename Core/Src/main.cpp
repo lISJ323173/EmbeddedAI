@@ -30,6 +30,7 @@
 #include "device/sg90.hpp"
 #include "device/servo_command_parser.hpp"
 #include "device/mpu6050.hpp"
+#include "cmsis_os2.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -172,6 +173,38 @@ extern "C" void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef* hi2c)
 extern "C" void HAL_I2C_ErrorCallback(I2C_HandleTypeDef* hi2c)
 {
     i2c1_port.on_read_error(hi2c);
+}
+
+struct ServoTaskContext {
+    bsp::IUart& uart;
+    device::Sg90& servo;
+};
+
+static volatile std::uint32_t servo_task_loops = 0U;
+
+static void servo_task(void* argument)
+{
+    auto& context = *static_cast<ServoTaskContext*>(argument);
+    device::ServoCommandParser parser;
+    unsigned position = 50U;
+
+    for (;;) {
+        ++servo_task_loops;
+
+        std::uint8_t byte{};
+        const auto status = context.uart.receive(&byte, 1U, 10U);
+        if (status == bsp::Error::Ok) {
+            if (parser.push(static_cast<char>(byte), position) &&
+                context.servo.set_position_percent(
+                    static_cast<std::int32_t>(position)) != bsp::Error::Ok) {
+                Error_Handler();
+            }
+        } else if (status == bsp::Error::Timeout) {
+            osDelay(1U);
+        } else {
+            Error_Handler();
+        }
+    }
 }
 /* USER CODE END 0 */
 
@@ -472,55 +505,36 @@ if (rx_restart_result != bsp::Error::Ok) {
 // }
 
   MX_TIM3_Init();
-  port::Stm32PwmCh1 pwm_port(htim3);
+  static port::Stm32PwmCh1 pwm_port(htim3);
   bsp::IPwm& pwm = pwm_port;
 
   if (pwm.start() != bsp::Error::Ok) {
       Error_Handler();
   }
 
-  device::Sg90 servo(pwm);
+  static device::Sg90 servo(pwm);
 
   if (servo.set_position_percent(50) != bsp::Error::Ok) {
       Error_Handler();
   }
 
-  device::ServoCommandParser servo_parser;
-  unsigned servo_position = 50U;
+  static ServoTaskContext servo_context{uart1_port, servo};
 
-  while (1)
-  {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-    std::uint8_t byte{};
-    const auto rx_result = uart1_port.receive(&byte, 1U, 10U);
-
-    if (rx_result == bsp::Error::Ok) {
-        if (servo_parser.push(static_cast<char>(byte), servo_position)) {
-            const auto servo_result = servo.set_position_percent(
-                static_cast<std::int32_t>(servo_position));
-            if (servo_result != bsp::Error::Ok) {
-                Error_Handler();
-            }
-        }
-    } else if (rx_result != bsp::Error::Timeout) {
-        servo_parser = {};
-        Error_Handler();
-    }
-
-    static uint32_t last_tick = 0;
-
-    uint32_t now = HAL_GetTick();
-
-    if (now - last_tick >= 1000U)
-    {
-    last_tick = now;
-    //std::printf("Heartbeat: %lu ms\r\n",
-               // static_cast<unsigned long>(now));
-    }
+  if (osKernelInitialize() != osOK) {
+      Error_Handler();
   }
-  /* USER CODE END 3 */
+
+  osThreadAttr_t attributes{};
+  attributes.name = "servo_rx";
+  attributes.priority = osPriorityNormal;
+  attributes.stack_size = 1024U;
+
+  if (osThreadNew(servo_task, &servo_context, &attributes) == nullptr) {
+      Error_Handler();
+  }
+
+  osKernelStart();
+  Error_Handler();
 }
 
 /**

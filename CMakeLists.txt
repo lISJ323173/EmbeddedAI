@@ -58,6 +58,27 @@ target_sources(STM32_Drivers PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_tim_ex.c
 )
 
+add_library(FreeRTOS OBJECT
+    Middlewares/Third_Party/FreeRTOS/Source/croutine.c
+    Middlewares/Third_Party/FreeRTOS/Source/event_groups.c
+    Middlewares/Third_Party/FreeRTOS/Source/list.c
+    Middlewares/Third_Party/FreeRTOS/Source/queue.c
+    Middlewares/Third_Party/FreeRTOS/Source/stream_buffer.c
+    Middlewares/Third_Party/FreeRTOS/Source/tasks.c
+    Middlewares/Third_Party/FreeRTOS/Source/timers.c
+    Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.c
+    Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c
+    Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c
+)
+
+target_include_directories(FreeRTOS PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/Middlewares/Third_Party/FreeRTOS/Source/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
+    ${CMAKE_CURRENT_SOURCE_DIR}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
+)
+
+target_link_libraries(FreeRTOS PUBLIC stm32cubemx)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     port/stm32/src/stm32_uart.cpp
@@ -92,6 +113,7 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
     bsp_interfaces
+    FreeRTOS
 
     # Add user defined libraries
 )
