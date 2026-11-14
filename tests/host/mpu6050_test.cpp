@@ -13,24 +13,42 @@ public:
     std::uint8_t seen_address{0};
     std::uint8_t seen_reg{0};
     std::size_t seen_size{0};
+    unsigned calls{0};
 
     bsp::Error read_register(std::uint8_t address_7bit,
                              std::uint8_t reg,
                              std::uint8_t* data,
                              std::size_t size,
-                             std::uint32_t) noexcept override
+                             std::uint32_t timeout_ms) noexcept override
     {
+        ++calls;
         seen_address = address_7bit;
         seen_reg = reg;
         seen_size = size;
+        assert(address_7bit == 0x68U);
+        assert(data != nullptr);
+        assert(timeout_ms == 100U);
 
-        if (result != bsp::Error::Ok) {
+        if (reg == 0x75U) {
+            assert(size == 1U);
+            if (result == bsp::Error::Ok) {
+                *data = value;
+            }
             return result;
         }
-        if (data != nullptr && size > 0U) {
-            data[0] = value;
+
+        constexpr std::uint8_t raw_bytes[] = {
+            0x12, 0x34, 0xFF, 0xFE, 0x80, 0x00, 0x01, 0x54,
+            0x7F, 0xFF, 0xFF, 0xFF, 0x00, 0x02
+        };
+        assert(reg == 0x3BU);
+        assert(size == sizeof(raw_bytes));
+        if (result == bsp::Error::Ok) {
+            for (std::size_t i = 0; i < sizeof(raw_bytes); ++i) {
+                data[i] = raw_bytes[i];
+            }
         }
-        return bsp::Error::Ok;
+        return result;
     }
 
     bsp::Error write_result{bsp::Error::Ok};
@@ -93,6 +111,25 @@ int main()
     bus.write_result = bsp::Error::Timeout;
     assert(imu.wake_up(100U) == bsp::Error::Timeout);
     assert(bus.write_calls == 2U);
+
+    device::Mpu6050RawSample sample{};
+    const auto reads_before = bus.calls;
+    assert(imu.read_raw(sample, 100U) == bsp::Error::NotInitialized);
+    assert(bus.calls == reads_before);
+
+    bus.write_result = bsp::Error::Ok;
+    assert(imu.wake_up(100U) == bsp::Error::Ok);
+    assert(imu.read_raw(sample, 100U) == bsp::Error::Ok);
+    assert(sample.accel_x == 0x1234 && sample.accel_y == -2);
+    assert(sample.accel_z == -32768 && sample.temperature == 340);
+    assert(sample.gyro_x == 32767 && sample.gyro_y == -1 && sample.gyro_z == 2);
+
+    sample.accel_x = 42;
+    bus.result = bsp::Error::Timeout;
+    assert(imu.read_raw(sample, 100U) == bsp::Error::Timeout);
+    assert(sample.accel_x == 42 && sample.accel_y == -2);
+    assert(sample.accel_z == -32768 && sample.temperature == 340);
+    assert(sample.gyro_x == 32767 && sample.gyro_y == -1 && sample.gyro_z == 2);
 
     std::cout << "MPU6050 HOST TEST: PASS\n";
     return 0;
