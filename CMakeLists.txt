@@ -50,6 +50,9 @@ add_executable(${CMAKE_PROJECT_NAME})
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
+target_sources(STM32_Drivers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_can.c
+)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -62,6 +65,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     port/stm32f4/src/uart_callback_router.cpp
     port/stm32f4/src/uart_hal_callbacks.cpp
     port/stm32f4/src/stm32_uart.cpp
+    port/stm32f4/src/stm32_can.cpp
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

@@ -24,6 +24,7 @@
 #include <cstdio>
 #include "stm32_uart.hpp"
 #include "uart_callback_router.hpp"
+#include "stm32_can.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,6 +47,13 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 extern "C" {
+    CAN_HandleTypeDef hcan1;
+}
+
+/* Kept at file scope so the debugger can resolve them at the RX check. */
+static bsp::CanFrame can_rx_frame{};
+
+extern "C" {
     DMA_HandleTypeDef hdma_usart1_tx;
     DMA_HandleTypeDef hdma_usart1_rx;
 }
@@ -57,6 +65,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static void MX_DMA_Init(void);
+static void MX_CAN1_Init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -95,6 +104,13 @@ static void uart_rx_callback(
         result != bsp::Error::Ok) {
         uart_rx_error = true;
     }
+}
+
+static port::Stm32Can can1_port(hcan1);
+
+extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* hcan)
+{
+    can1_port.on_rx0_pending(hcan);
 }
 
 extern "C" int _write(int file, char *ptr, int len)
@@ -165,6 +181,74 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
 
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  MX_CAN1_Init();
+
+  /* CAN1 internal loopback: transmit once, read the frame back from FIFO0. */
+  {
+      CAN_FilterTypeDef can_filter{};
+      can_filter.FilterBank = 0;
+      can_filter.FilterMode = CAN_FILTERMODE_IDMASK;
+      can_filter.FilterScale = CAN_FILTERSCALE_32BIT;
+      can_filter.FilterIdHigh = 0x0000U;
+      can_filter.FilterIdLow = 0x0000U;
+      can_filter.FilterMaskIdHigh = 0x0000U;
+      can_filter.FilterMaskIdLow = 0x0000U;
+      can_filter.FilterFIFOAssignment = CAN_RX_FIFO0;
+      can_filter.FilterActivation = ENABLE;
+      can_filter.SlaveStartFilterBank = 14;
+
+      if (HAL_CAN_ConfigFilter(&hcan1, &can_filter) != HAL_OK) {
+          Error_Handler();
+      }
+
+      if (HAL_CAN_Start(&hcan1) != HAL_OK) {
+          Error_Handler();
+      }
+
+      bsp::ICan& can1 = can1_port;
+bsp::ICanIrqRx& can1_irq = can1_port;
+const bsp::CanFrame tx_frame{0x123, 4, {0x11, 0x22, 0x33, 0x44}};
+
+HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 5, 0);
+HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+
+for (unsigned attempt = 0; attempt < 2; ++attempt) {
+    can_rx_frame = {};
+    const auto arm_result = can1_irq.arm_receive_irq();
+    if (arm_result != bsp::Error::Ok) {
+        Error_Handler();
+    }
+
+    const auto tx_result = can1.try_send(tx_frame);
+    if (tx_result != bsp::Error::Ok) {
+        Error_Handler();
+    }
+
+    const auto rx_result = can1_irq.wait_receive_irq(can_rx_frame, 100U);
+    if (rx_result != bsp::Error::Ok ||
+        can_rx_frame.id != tx_frame.id ||
+        can_rx_frame.dlc != tx_frame.dlc) {
+        Error_Handler();
+    }
+    for (unsigned i = 0; i < tx_frame.dlc; ++i) {
+        if (can_rx_frame.data[i] != tx_frame.data[i]) {
+            Error_Handler();
+        }
+    }
+
+    if (attempt == 0) {
+        bsp::CanFrame empty_frame{};
+        if (can1_irq.arm_receive_irq() != bsp::Error::Ok) {
+            Error_Handler();
+        }
+        const auto empty_irq_result =
+            can1_irq.wait_receive_irq(empty_frame, 10U);
+        if (empty_irq_result != bsp::Error::Timeout) {
+            Error_Handler();
+        }
+    }
+}
+  }
 
   /* USART1 DMA TX test (disabled after DMA TX acceptance) */
 #if 0
@@ -427,6 +511,26 @@ static void MX_DMA_Init(void)
 
     HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
+}
+
+static void MX_CAN1_Init(void)
+{
+    hcan1.Instance = CAN1;
+    hcan1.Init.Prescaler = 6;
+    hcan1.Init.Mode = CAN_MODE_LOOPBACK;
+    hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
+    hcan1.Init.TimeSeg1 = CAN_BS1_11TQ;
+    hcan1.Init.TimeSeg2 = CAN_BS2_2TQ;
+    hcan1.Init.TimeTriggeredMode = DISABLE;
+    hcan1.Init.AutoBusOff = DISABLE;
+    hcan1.Init.AutoWakeUp = DISABLE;
+    hcan1.Init.AutoRetransmission = DISABLE;
+    hcan1.Init.ReceiveFifoLocked = DISABLE;
+    hcan1.Init.TransmitFifoPriority = DISABLE;
+
+    if (HAL_CAN_Init(&hcan1) != HAL_OK) {
+        Error_Handler();
+    }
 }
 /* USER CODE END 4 */
 
