@@ -43,3 +43,7 @@ target_compile_options(mpu6050_test PRIVATE
 )
 
 add_test(NAME mpu6050_probe_tests COMMAND mpu6050_test)
+
+add_executable(crc8_test crc8_test.cpp)
+target_include_directories(crc8_test PRIVATE ../../module/include)
+add_test(NAME crc8_tests COMMAND crc8_test)
