@@ -160,5 +160,6 @@ the consumer owns no pointer into the producer's stack.
   it does not claim FreeRTOS or the 5 s timeout.
 - CAN is currently internal loopback at the F407; external bus wiring and a second
   node are not part of the acceptance evidence.
-- `bsp::ILog` is only an interface at this point; see
-  [interfaces.md](interfaces.md#logging-interface-status).
+- `bsp::ILog` is implemented for startup by `port::UartLog`; it is blocking and
+  startup-only, not a concurrent runtime logger. See
+  [interfaces.md](interfaces.md#logging-interface).

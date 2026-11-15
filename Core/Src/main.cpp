@@ -27,6 +27,7 @@
 #include "stm32_can.hpp"
 #include "stm32_i2c.hpp"
 #include "stm32_pwm.hpp"
+#include "uart_log.hpp"
 #include "device/sg90.hpp"
 #include "application/servo_tasks.hpp"
 #include "device/mpu6050.hpp"
@@ -269,6 +270,12 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
 
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  port::UartLog uart_log(uart1_port);
+  bsp::ILog& log = uart_log;
+  if (log.write(bsp::LogLevel::Info, "USART1 ready") != bsp::Error::Ok) {
+      Error_Handler();
+  }
+
   MX_I2C1_Init();
   HAL_Delay(200);
 
@@ -329,6 +336,12 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
   // 当前模块的设备层验收：读到已知的身份不匹配值。
   if (imu_probe_result != bsp::Error::Unsupported ||
       imu_probe_id != 0x74U) {
+      Error_Handler();
+  }
+
+  if (imu_probe_result == bsp::Error::Unsupported &&
+      log.write(bsp::LogLevel::Warning, "IMU identity unsupported")
+          != bsp::Error::Ok) {
       Error_Handler();
   }
 

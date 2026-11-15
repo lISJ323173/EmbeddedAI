@@ -15,7 +15,7 @@ Updated: 2026-11-15
 | Build | Result | Flash | RAM | Artifact |
 |---|---|---:|---:|---|
 | F407 Debug | Pass | 61,068 B | 21,520 B | `build/Debug/framework.elf` |
-| F407 Release | Pass | 31,576 B | 21,512 B | `build/Release/framework.elf` |
+| F407 Release | Pass | 31,880 B | 21,512 B | `build/Release/framework.elf` |
 | F103 Debug | Pass | 12,216 B | 2,128 B | `port/stm32f1/build/Debug/f103_ref.elf` |
 | Host CTest | Pass 3/3 | - | - | `tests/host/build` |
 
@@ -41,6 +41,7 @@ recorded below.
 | CRC-required command frames | F407 Debug | Physical: valid frames applied; bad CRC/range/old format rejected | Pass | `4459ea7` |
 | F103 UART + PWM port | F103 Debug | Physical: `F103 BSP READY\r\n`; frames -> `1300/1300/1700/1500` | Pass | `7976c73` |
 | F407 Release regression | F407 Release | Physical: CRC frames, timeout, 10 s health run | Pass | `4459ea7` |
+| Startup UART logging | F407 Release | Physical: INFO and WARN each once; S0/S50 and health clean | Pass | this change |
 
 ## Recorded Evidence
 
@@ -77,7 +78,10 @@ A later `S0*A3\n` followed by bad CRC `S50*B0\n` still centered at `1500` about
 
 ### F407 Release regression
 
-- Build/download: `31,576 B Flash`, `21,512 B RAM`, ELF downloaded with J-Link.
+- Build/download: `31,880 B Flash`, `21,512 B RAM`, ELF downloaded with J-Link.
+- Startup logging: COM7 was opened before reset; exactly
+  `[INFO] USART1 ready\r\n` and `[WARN] IMU identity unsupported\r\n` were
+  received, one each.
 - `S0*A3\n` -> `CCR1=1300`, queue/execution `1/1`.
 - Bad CRC `S50*B0\n` ~3 s later -> rejected; `CCR1` stayed `1300`.
 - About 5 s after `S0`, automatic center -> `CCR1=1500`; counters stayed `1/1`.
@@ -85,6 +89,8 @@ A later `S0*A3\n` followed by bad CRC `S50*B0\n` still centered at `1500` about
 - `S50*B1\n` -> `CCR1=1500`, counters `3/3`.
 - Additional 10 s idle: health windows `3 -> 42`, `servo_health_missing=0`,
   `uwTick=21567`, `CCR1=1500`.
+- On the logged build, a fresh reset reached health window `1`; then
+  `S0`/`S50` gave `1300/1500` and windows advanced `13 -> 20` with `missing=0`.
 - `Error_Handler` and `HardFault_Handler` breakpoints were not hit; no unexpected
   reset was observed.
 
@@ -97,7 +103,8 @@ A later `S0*A3\n` followed by bad CRC `S50*B0\n` still centered at `1500` about
 | Phone control | USB-TTL to SG90 command chain is measured. HC-05 wireless link and disconnection behavior remain unverified. |
 | FreeRTOS / IWDG | Dual tasks, queue, health monitor and fault-injection reset are measured on F407. The reset evidence is the `IWDGRSTF` transition above. |
 | F103 port | Commit `7976c73`; UART blocking RX/TX and TIM3 PWM measured. FreeRTOS and 5 s timeout on F103 are not claimed; those remain F407 results. |
-| F407 Release | Build, download and physical regression pass (`31,576 B Flash / 21,512 B RAM`); evidence above. |
+| F407 Release | Build, download and physical regression pass (`31,880 B Flash / 21,512 B RAM`); startup INFO/WARN logs, S0/S50 and health evidence above. |
+| Logging | `port::UartLog` over `bsp::IUart` is implemented in `port/stm32f4/include/uart_log.hpp` and called twice before the scheduler. Startup logging is verified; runtime/concurrent logging is not integrated because USART1 belongs to `servo_rx` after startup. |
 
 ## Reproduction Commands
 

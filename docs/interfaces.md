@@ -211,9 +211,9 @@ Position mapping in `device/include/device/sg90.hpp` is linear
 `0..100 -> 1300..1700 us`; 50 maps to 1500 us. The F103 demo uses the same parser, CRC and `Sg90` mapping, but does not
 run FreeRTOS or the 5 s state machine.
 
-## Logging Interface Status
+## Logging Interface
 
-`bsp/include/bsp/ilog.hpp` defines a unified interface:
+`bsp/include/bsp/ilog.hpp` defines the interface:
 
 ```cpp
 enum class LogLevel : std::uint8_t { Debug, Info, Warning, Error };
@@ -225,12 +225,28 @@ public:
 };
 ```
 
-**Current status: interface only, not integrated.** There is no `ILog`
-implementation under `port/`, no logger instance in `Core/`, and no call site in
-`application/`, `device/`, `port/` or `Core/Src/main.cpp` (only the header
-definition exists). This is a delivery gap to be filled in a later round.
+**Implementation:** `port/stm32f4/include/uart_log.hpp` defines
+`port::UartLog`, which formats one line as `[LEVEL] message\r\n` and submits it
+with one blocking `bsp::IUart::transmit(..., 100U)` call. `UartLog` supports
+messages up to 80 bytes and rejects null/empty messages, embedded `CR`/`LF`, and
+overlong input with `InvalidArgument`; UART errors are returned unchanged.
 
-Current error handling is therefore fail-stop: tasks call their injected
-`on_failure` function, which is `Error_Handler()` on F407; the health task stops
-refreshing the IWDG on a missed heartbeat. `bsp::Error` covers the return values,
-but there is no runtime log sink yet.
+Current call sites in `Core/Src/main.cpp`:
+
+1. Immediately after `MX_USART1_UART_Init()`:
+   `[INFO] USART1 ready`.
+2. After the `Mpu6050::probe()` identity check and before `MX_CAN1_Init()`:
+   `[WARN] IMU identity unsupported`.
+
+Both calls run **before the scheduler starts**. This is deliberate: the first
+version is startup-only, has a single caller, uses blocking output, and does not
+race the `servo_rx` task for USART1. A failed `write()` enters `Error_Handler()`.
+
+USART1 is also used by `servo_rx` after the scheduler starts; `UartLog` is not a
+concurrent runtime logger. A later runtime log path needs ownership arbitration,
+a queue or a dedicated UART/log sink.
+
+Measured on the F407 Release build: the port received exactly
+`[INFO] USART1 ready\r\n` followed by `[WARN] IMU identity unsupported\r\n`
+(one each) when COM7 was opened before reset. `S0/S50` still produced
+`CCR1=1300/1500` and the health window continued with `missing=0`.

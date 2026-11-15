@@ -28,7 +28,7 @@ cmake --build --preset Release
 | Build | ELF | Flash | RAM |
 |---|---|---:|---:|
 | Debug | `build/Debug/framework.elf` | 61,068 B | 21,520 B |
-| Release | `build/Release/framework.elf` | 31,576 B | 21,512 B |
+| Release | `build/Release/framework.elf` | 31,880 B | 21,512 B |
 
 The Release build was downloaded and physically regressed; its evidence is
 recorded in `docs/acceptance.md` and commit `a0c1025`. The F407 code path used for
@@ -43,6 +43,11 @@ that regression is the CRC-command baseline `4459ea7`.
 - I2C1: `PB6` SCL / `PB7` SDA, 100 kHz, 7-bit.
 - CAN1: `PD0` RX / `PD1` TX, internal loopback only at 500 kbit/s.
 - IWDG: `Prescaler=64`, `Reload=1499`; refreshed only by `servo_health_task`.
+- Startup logging: `port::UartLog` in `port/stm32f4/include/uart_log.hpp`
+  writes two blocking lines before the scheduler starts:
+  `[INFO] USART1 ready` and `[WARN] IMU identity unsupported`. Open the serial
+  port before reset; each line is sent once. Runtime logging is not integrated
+  because USART1 is owned by `servo_rx` after startup.
 
 ### J-Link and Serial Wiring
 
@@ -166,7 +171,7 @@ rejected).
 | CAN | F407 internal loopback polling/FIFO0 IRQ | External transceiver, bus, second node |
 | I2C/IMU | F407 blocking/IT reads; `WHO_AM_I=0x74` rejected | Genuine MPU6050 identity/wake/raw sample |
 | Phone link | USB-TTL to SG90 | HC-05 wireless/disconnect behavior |
-| Logging | `bsp::ILog` interface exists | No port implementation or call site |
+| Logging | `port::UartLog` startup INFO/WARN lines verified | Runtime/concurrent logging; USART1 arbitration after scheduler start |
 
 ## Troubleshooting
 

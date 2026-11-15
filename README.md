@@ -8,7 +8,7 @@ UART/PWM porting baseline on STM32F103C8T6.
 - [Architecture](docs/architecture.md) - layer responsibilities, servo data flow,
   health monitoring/IWDG, task priorities and stack evidence.
 - [Interfaces](docs/interfaces.md) - UART, CAN, I2C and PWM contracts, command
-  protocol and CRC, units and buffer lifetimes, plus the current logging gap.
+  protocol and CRC, units and buffer lifetimes, plus the startup UART logger.
 - [Porting and build guide](docs/porting.md) - F407/F103 build commands, ELF
   paths, J-Link targets, wiring and verification scope.
 - [Acceptance record](docs/acceptance.md) - target/build matrix, measured
@@ -67,8 +67,9 @@ Expected: 3/3 tests pass.
 
 ## Status
 
-F407 Release `31,576 B` Flash / `21,512 B` RAM was downloaded and regressed; the
+F407 Release `31,880 B` Flash / `21,512 B` RAM was downloaded and regressed; the
 acceptance record is commit `a0c1025`. The F103 blocking UART + TIM3 PWM port is
-commit `7976c73`. External CAN, genuine MPU6050 wake/sample, HC-05 wireless and
-the unified `bsp::ILog` implementation remain open items; see
+commit `7976c73`. Startup UART logging (`[INFO] USART1 ready`,
+`[WARN] IMU identity unsupported`) is verified. External CAN, genuine MPU6050
+wake/sample, HC-05 wireless and concurrent runtime logging remain open items; see
 [acceptance.md](docs/acceptance.md) and [interfaces.md](docs/interfaces.md).
