@@ -1,38 +1,33 @@
-# framework
+# 嵌入式框架
 
-STM32 embedded framework with a full FreeRTOS demo on STM32F407ZGT6 and a
-UART/PWM porting baseline on STM32F103C8T6.
+基于 STM32 的嵌入式框架：在 STM32F407ZGT6 上运行完整的 FreeRTOS 演示，在 STM32F103C8T6 上提供 UART/PWM 移植基线。
 
-## Documentation
+## 文档
 
-- [Architecture](docs/architecture.md) - layer responsibilities, servo data flow,
-  health monitoring/IWDG, task priorities and stack evidence.
-- [Interfaces](docs/interfaces.md) - UART, CAN, I2C and PWM contracts, command
-  protocol and CRC, units and buffer lifetimes, plus the startup UART logger.
-- [Porting and build guide](docs/porting.md) - F407/F103 build commands, ELF
-  paths, J-Link targets, wiring and verification scope.
-- [Acceptance record](docs/acceptance.md) - target/build matrix, measured
-  evidence, commit traceability and remaining verification boundaries.
+- [架构设计](docs/architecture.md)：分层职责、舵机数据流、健康监测/IWDG、任务优先级与栈余量证据。
+- [接口说明](docs/interfaces.md)：UART、CAN、I2C、PWM 接口约定，指令协议与 CRC，地址/超时/缓冲区生命周期，以及启动期 UART 日志。
+- [移植与构建指南](docs/porting.md)：F407/F103 构建命令、ELF 路径、J-Link 目标、接线和验证范围。
+- [验收记录](docs/acceptance.md)：目标板/构建矩阵、实测证据、提交追溯和剩余待验证边界。
 
-## Directory Structure
+## 目录结构
 
-| Directory | Responsibility |
+| 目录 | 职责 |
 |---|---|
-| `Core/` | STM32F407 startup, clock, peripheral initialization, interrupt vectors, `main` and IWDG |
-| `Drivers/` | ST CMSIS and STM32F4 HAL (vendor code, read-only) |
-| `Middlewares/` | FreeRTOS 10.3.1 and CMSIS-RTOS2 |
-| `bsp/` | Pure-virtual UART, CAN, I2C, PWM and log interfaces; shared `bsp::Error` |
-| `port/` | Chip implementations of BSP interfaces; the only code allowed to call peripheral HAL |
-| `device/` | SG90, MPU6050, command parsers and checked CRC parser |
-| `module/` | CRC-8/SMBUS and the 5 s servo command state |
-| `application/` | Servo RX/output tasks, contexts, queue and health policy |
-| `config/` | Reserved board parameter tables (currently empty) |
-| `tests/host/` | Native UART, MPU6050 and CRC tests |
-| `docs/` | Architecture, interface, porting and acceptance records |
+| `Core/` | STM32F407 启动、时钟、外设初始化、中断向量、`main` 和 IWDG |
+| `Drivers/` | ST CMSIS 与 STM32F4 HAL（厂商代码，只读） |
+| `Middlewares/` | FreeRTOS 10.3.1 与 CMSIS-RTOS2 |
+| `bsp/` | UART、CAN、I2C、PWM 和日志的纯虚接口，以及统一的 `bsp::Error` |
+| `port/` | BSP 接口的芯片实现；唯一允许调用外设 HAL 的目录 |
+| `device/` | SG90、MPU6050、指令解析器和带 CRC 校验的解析器 |
+| `module/` | CRC-8/SMBUS 与 5 秒舵机指令状态机 |
+| `application/` | 舵机接收/输出任务、上下文和命令队列 |
+| `config/` | 预留的板级参数表（当前为空） |
+| `tests/host/` | 主机侧 UART、MPU6050 与 CRC 测试 |
+| `docs/` | 架构、接口、移植和验收文档 |
 
-## Quick Start
+## 快速开始
 
-### F407 full demo
+### F407 完整演示
 
 ```powershell
 cd E:\framework
@@ -40,11 +35,9 @@ cmake --preset Release
 cmake --build --preset Release
 ```
 
-ELF: `build/Release/framework.elf`; J-Link target `STM32F407ZG`; USB-TTL at
-115200 8N1. The application accepts CRC frames such as `S50*B1\n` (the old plain
-`S50\n` is rejected).
+ELF 路径：`build/Release/framework.elf`；J-Link 目标：`STM32F407ZG`；USB-TTL 使用 115200 8N1。应用只接受带 CRC 的指令帧，例如 `S50*B1\n`；旧的纯文本格式 `S50\n` 会被拒绝。
 
-### F103 UART/PWM port
+### F103 UART/PWM 移植
 
 ```powershell
 cd E:\framework\port\stm32f1
@@ -52,9 +45,9 @@ cmake --preset Debug
 cmake --build --preset Debug
 ```
 
-ELF: `port/stm32f1/build/Debug/f103_ref.elf`; J-Link target `STM32F103C8`.
+ELF 路径：`port/stm32f1/build/Debug/f103_ref.elf`；J-Link 目标：`STM32F103C8`。
 
-### Host tests
+### 主机测试
 
 ```powershell
 cd E:\framework
@@ -63,13 +56,17 @@ cmake --build tests/host/build
 ctest --test-dir tests/host/build --output-on-failure
 ```
 
-Expected: 3/3 tests pass.
+预期结果：3/3 测试通过。
 
-## Status
+## 当前状态
 
-F407 Release `31,880 B` Flash / `21,512 B` RAM was downloaded and regressed; the
-acceptance record is commit `a0c1025`. The F103 blocking UART + TIM3 PWM port is
-commit `7976c73`. Startup UART logging (`[INFO] USART1 ready`,
-`[WARN] IMU identity unsupported`) is verified. External CAN, genuine MPU6050
-wake/sample, HC-05 wireless and concurrent runtime logging remain open items; see
-[acceptance.md](docs/acceptance.md) and [interfaces.md](docs/interfaces.md).
+F407 Release 固件占用 `31,880 B` Flash、`21,512 B` RAM，已完成下载和实物回归；验收记录见提交 `a0c1025`。F103 阻塞式 UART + TIM3 PWM 移植基线见提交 `7976c73`。
+
+启动期 UART 日志已验证：
+
+```text
+[INFO] USART1 ready
+[WARN] IMU identity unsupported
+```
+
+外部 CAN 总线、真实 MPU6050 的唤醒与采样、HC-05 无线链路，以及运行期并发日志仍待完成。详情见 [验收记录](docs/acceptance.md) 和 [接口说明](docs/interfaces.md)。
