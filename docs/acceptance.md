@@ -1,6 +1,6 @@
 # Framework Acceptance Record
 
-Updated: 2026-11-15
+Updated: 2026-11-16
 
 ## Targets
 
@@ -15,14 +15,16 @@ Updated: 2026-11-15
 | Build | Result | Flash | RAM | Artifact |
 |---|---|---:|---:|---|
 | F407 Debug | Pass | 61,068 B | 21,520 B | `build/Debug/framework.elf` |
-| F407 Release | Pass | 31,880 B | 21,512 B | `build/Release/framework.elf` |
+| F407 Release (pre-log baseline) | Pass | 31,576 B | 21,512 B | `build/Release/framework.elf` |
+| F407 Release (final, startup log) | Pass | 31,880 B | 21,512 B | `build/Release/framework.elf` |
 | F103 Debug | Pass | 12,216 B | 2,128 B | `port/stm32f1/build/Debug/f103_ref.elf` |
-| Host CTest | Pass 3/3 | - | - | `tests/host/build` |
+| Host CTest | Pass 5/5 | - | - | `tests/host/build` |
 
 The F407 Release ELF was built with `cmake --preset Release`, downloaded with
-J-Link, and physically regressed on the F407. The release build, memory usage,
-serial command behavior, timeout center, health monitor and reset status are
-recorded below.
+J-Link, and physically regressed on the F407. The final logging Release is
+`2d730b6` (`31,880 B`); `a0c1025` is the pre-log baseline (`31,576 B`). The
+release build, memory usage, serial command behavior, timeout center, health
+monitor and reset status are recorded below.
 
 ## Acceptance Matrix
 
@@ -38,10 +40,11 @@ recorded below.
 | Application task boundary | F407 Debug | Physical: same queue/CCR regression, health clean | Pass | `0f6fa95` |
 | 5 s command timeout / center | F407 Debug | Physical: bad CRC does not extend hold; both timeouts center | Pass | `380db49` |
 | CRC-8/SMBUS | Host | Compile-time vectors: empty `0x00`, `123456789` -> `0xF4`; bit flip rejected | Pass | `0018f14` |
+| Servo parser + smoke | Host | CTest 5/5; parser accepts S0/S100, rejects S101/old format; C++17 smoke | Pass | this change |
 | CRC-required command frames | F407 Debug | Physical: valid frames applied; bad CRC/range/old format rejected | Pass | `4459ea7` |
 | F103 UART + PWM port | F103 Debug | Physical: `F103 BSP READY\r\n`; frames -> `1300/1300/1700/1500` | Pass | `7976c73` |
-| F407 Release regression | F407 Release | Physical: CRC frames, timeout, 10 s health run | Pass | `4459ea7` |
-| Startup UART logging | F407 Release | Physical: INFO and WARN each once; S0/S50 and health clean | Pass | this change |
+| F407 Release regression | F407 Release | Physical: CRC frames, timeout, 10 s health run | Pass | `2d730b6` |
+| Startup UART logging | F407 Release | Physical: INFO and WARN each once; S0/S50 and health clean | Pass | `2d730b6` |
 
 ## Recorded Evidence
 

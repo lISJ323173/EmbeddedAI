@@ -8,6 +8,7 @@
 - [接口说明](docs/interfaces.md)：UART、CAN、I2C、PWM 接口约定，指令协议与 CRC，地址/超时/缓冲区生命周期，以及启动期 UART 日志。
 - [移植与构建指南](docs/porting.md)：F407/F103 构建命令、ELF 路径、J-Link 目标、接线和验证范围。
 - [验收记录](docs/acceptance.md)：目标板/构建矩阵、实测证据、提交追溯和剩余待验证边界。
+- [取舍与踩坑记录](docs/notes.md)：为什么这样拆分、参数取舍、真实调试过程中遇到的坑。
 
 ## 目录结构
 
@@ -17,7 +18,7 @@
 | `Drivers/` | ST CMSIS 与 STM32F4 HAL（厂商代码，只读） |
 | `Middlewares/` | FreeRTOS 10.3.1 与 CMSIS-RTOS2 |
 | `bsp/` | UART、CAN、I2C、PWM 和日志的纯虚接口，以及统一的 `bsp::Error` |
-| `port/` | BSP 接口的芯片实现；唯一允许调用外设 HAL 的目录 |
+| `port/` | BSP 接口的芯片实现；外设访问的 HAL 适配集中在这里，`Core/` 仍保留启动、时钟、中断和板级 fail-stop 所需的 HAL 调用 |
 | `device/` | SG90、MPU6050、指令解析器和带 CRC 校验的解析器 |
 | `module/` | CRC-8/SMBUS 与 5 秒舵机指令状态机 |
 | `application/` | 舵机接收/输出任务、上下文和命令队列 |
@@ -56,11 +57,11 @@ cmake --build tests/host/build
 ctest --test-dir tests/host/build --output-on-failure
 ```
 
-预期结果：3/3 测试通过。
+预期结果：5/5 测试通过。
 
 ## 当前状态
 
-F407 Release 固件占用 `31,880 B` Flash、`21,512 B` RAM，已完成下载和实物回归；验收记录见提交 `a0c1025`。F103 阻塞式 UART + TIM3 PWM 移植基线见提交 `7976c73`。
+F407 Release 固件最终占用 `31,880 B` Flash、`21,512 B` RAM（加入启动日志后的 `2d730b6`）；加入日志前的基线为 `31,576 B`（`a0c1025`）。F103 阻塞式 UART + TIM3 PWM 移植基线见提交 `7976c73`。
 
 启动期 UART 日志已验证：
 

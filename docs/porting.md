@@ -31,8 +31,9 @@ cmake --build --preset Release
 | Release | `build/Release/framework.elf` | 31,880 B | 21,512 B |
 
 The Release build was downloaded and physically regressed; its evidence is
-recorded in `docs/acceptance.md` and commit `a0c1025`. The F407 code path used for
-that regression is the CRC-command baseline `4459ea7`.
+recorded in `docs/acceptance.md`. The final logging Release is `2d730b6`
+(`31,880 B`); the pre-log baseline is `a0c1025` (`31,576 B`, CRC-command path
+`4459ea7`).
 
 ### Clock and Peripherals
 
@@ -158,9 +159,10 @@ cmake --build tests/host/build
 ctest --test-dir tests/host/build --output-on-failure
 ```
 
-Expected result is 3/3: UART parser, MPU6050 probe and CRC-8. The CRC test uses
-compile-time assertions (empty input `0x00`, `123456789 -> 0xF4`, one-bit flip
-rejected).
+Expected result is 5/5: UART parser, MPU6050 probe, CRC-8, servo command parser
+and C++17 smoke. The CRC test uses compile-time assertions (empty input `0x00`,
+`123456789 -> 0xF4`, one-bit flip rejected); the servo parser test runs with
+assertions enabled.
 
 ## Current Verification Boundaries
 

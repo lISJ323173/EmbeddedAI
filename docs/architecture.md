@@ -162,4 +162,5 @@ the consumer owns no pointer into the producer's stack.
   node are not part of the acceptance evidence.
 - `bsp::ILog` is implemented for startup by `port::UartLog`; it is blocking and
   startup-only, not a concurrent runtime logger. See
-  [interfaces.md](interfaces.md#logging-interface).
+  [interfaces.md](interfaces.md#logging-interface) and the personal
+  [取舍与踩坑记录](notes.md).

@@ -47,3 +47,17 @@ add_test(NAME mpu6050_probe_tests COMMAND mpu6050_test)
 add_executable(crc8_test crc8_test.cpp)
 target_include_directories(crc8_test PRIVATE ../../module/include)
 add_test(NAME crc8_tests COMMAND crc8_test)
+
+add_executable(servo_command_test servo_command_test.cpp)
+target_include_directories(servo_command_test PRIVATE ../../device/include)
+target_compile_options(servo_command_test PRIVATE
+    -Wall -Wextra -Werror -UNDEBUG
+)
+add_test(NAME servo_command_tests COMMAND servo_command_test)
+
+add_executable(smoke_test smoke_test.cpp)
+target_include_directories(smoke_test PRIVATE ../../bsp/include)
+target_compile_options(smoke_test PRIVATE
+    -Wall -Wextra -Werror -UNDEBUG
+)
+add_test(NAME host_smoke_tests COMMAND smoke_test)
