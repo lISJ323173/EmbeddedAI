@@ -14,7 +14,7 @@ Updated: 2026-11-16
 
 | Build | Result | Flash | RAM | Artifact |
 |---|---|---:|---:|---|
-| F407 Debug | Pass | 61,068 B | 21,520 B | `build/Debug/framework.elf` |
+| F407 Debug | Pass | 61,912 B | 21,520 B | `build/Debug/framework.elf` |
 | F407 Release (pre-log baseline) | Pass | 31,576 B | 21,512 B | `build/Release/framework.elf` |
 | F407 Release (final, startup log) | Pass | 31,880 B | 21,512 B | `build/Release/framework.elf` |
 | F103 Debug | Pass | 12,216 B | 2,128 B | `port/stm32f1/build/Debug/f103_ref.elf` |

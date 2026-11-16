@@ -4,6 +4,8 @@
 
 ## 文档
 
+> 文档语言约定：README 和 `docs/notes.md` 用中文，`docs/` 下的架构/接口/移植/验收文档保留英文，便于与代码接口名、日志和提交记录对应。
+
 - [架构设计](docs/architecture.md)：分层职责、舵机数据流、健康监测/IWDG、任务优先级与栈余量证据。
 - [接口说明](docs/interfaces.md)：UART、CAN、I2C、PWM 接口约定，指令协议与 CRC，地址/超时/缓冲区生命周期，以及启动期 UART 日志。
 - [移植与构建指南](docs/porting.md)：F407/F103 构建命令、ELF 路径、J-Link 目标、接线和验证范围。

@@ -27,7 +27,7 @@ cmake --build --preset Release
 
 | Build | ELF | Flash | RAM |
 |---|---|---:|---:|
-| Debug | `build/Debug/framework.elf` | 61,068 B | 21,520 B |
+| Debug | `build/Debug/framework.elf` | 61,912 B | 21,520 B |
 | Release | `build/Release/framework.elf` | 31,880 B | 21,512 B |
 
 The Release build was downloaded and physically regressed; its evidence is

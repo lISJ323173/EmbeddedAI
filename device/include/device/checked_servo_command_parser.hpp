@@ -10,7 +10,6 @@ namespace device {
 
 class CheckedServoCommandParser {
 public:
-    // Busy 表示尚未收到行尾，继续输入下一字节。
     bsp::Error push(std::uint8_t byte, unsigned& position) noexcept
     {
         if (byte != '\n') {
@@ -61,7 +60,6 @@ private:
         ServoCommandParser parser;
         unsigned candidate{};
         for (std::size_t i = 0; i < separator; ++i) {
-            // CR 只允许出现在整帧末尾。
             if (line_[i] == '\r') {
                 return bsp::Error::InvalidArgument;
             }

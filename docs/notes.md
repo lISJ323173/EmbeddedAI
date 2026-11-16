@@ -118,3 +118,11 @@ F103 这一轮只验证“同一套 BSP、CRC 解析器、SG90 驱动能不能�
 - 运行期日志、HC-05 断链、外部 CAN 和真实 MPU6050 都还没有验证。
 
 这些不是“待办清单式”的假谦虚，而是我目前确实没有数据支撑的部分。
+
+## 5. 代码清理记录
+
+后来我把 `Core/Src/main.cpp` 里已经关闭的 UART IT/DMA bring-up 自检和未使用的回调删掉了，`main.cpp` 从 834 行降到 681 行，编译不再报 `uart_it_callback` / `uart_rx_callback` 未使用。
+
+保留的是仍然会运行的 I2C、IMU、CAN 自检和任务创建；删掉的是历史实验代码。这样“最终固件路径”和“调试工作台”能分得开一点。
+
+主机测试也补了接线：`servo_command_test` 和 `smoke_test` 已经进入 CTest，当前是 5/5。这个改动不影响 F407 固件功能，Release 仍是 `31,880 B`。
