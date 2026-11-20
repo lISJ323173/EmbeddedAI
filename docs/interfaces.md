@@ -1,5 +1,7 @@
 # Interfaces
 
+F103 gimbal-specific interfaces and calibration details are tracked in [gimbal.md](gimbal.md).
+
 All public interfaces live under `E:\framework\bsp\include\bsp\`. They use
 `bsp::Error` and do not expose HAL types. Implementations live under `port/`.
 

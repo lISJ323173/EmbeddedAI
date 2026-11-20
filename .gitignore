@@ -19,6 +19,7 @@ compile_commands.json
 !.vscode/extensions.json
 .idea/
 *.code-workspace
+port/.vscode/
 
 # ---- 系统 / 临时 ----
 .DS_Store

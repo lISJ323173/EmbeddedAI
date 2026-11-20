@@ -18,20 +18,54 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "main.h"
+#include "cmsis_os2.h"
+#include "FreeRTOS.h"
+#include "queue.h"
+#include "module/gyro_bias.h"
+#include "module/attitude.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct {
+    uint32_t count;
+    uint32_t errors;
+    uint32_t dt_min;
+    uint32_t dt_max;
+    uint32_t dt_bad_total;
+    uint32_t dt_last_bad;
+    uint32_t dt_bad_at_sample;
+    uint32_t servo_state;
+    uint32_t servo_pulse;
+    uint32_t missed;
+    uint32_t calibration_ready;
+    uint32_t calibration_count;
+    uint32_t attitude_status;
+    int32_t angle_mdeg[3];
+    int32_t bias[3];
+    int32_t rate_mdeg[3];
+    int32_t accel[3];
+    int32_t gyro[3];
+} ImuReport;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/* Pitch axis calibration, measured on the assembled gimbal:
+   - 1500 us is the level position. The mechanical lower stop sits just
+     below it, so never command less than GIMBAL_PITCH_ZERO_US.
+   - 2500 us lifts the platform 84 deg; this is the conservative limit
+     (the servo's nominal range ends here).
+   - Effective gain above the ~100 us linkage slack: ~0.093 deg/us.
+   - Servo dead band: ~20 us (~1.9 deg). */
+#define GIMBAL_PITCH_ZERO_US  1500U
+#define GIMBAL_PITCH_MAX_US   2500U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -40,27 +74,89 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
 
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+const osThreadAttr_t defaultTask_attributes = {
+  .name = "defaultTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* USER CODE BEGIN PV */
+extern UART_HandleTypeDef huart1;
 
+extern I2C_HandleTypeDef hi2c1;
+extern UART_HandleTypeDef huart2;
+
+volatile uint8_t imu_id = 0xFFU;
+volatile uint8_t imu_power = 0xFFU;
+volatile uint32_t imu_init_status = HAL_ERROR;
+volatile uint32_t imu_read_status = HAL_ERROR;
+volatile uint32_t imu_sample_count = 0U;
+volatile uint32_t imu_error_count = 0U;
+
+volatile int32_t imu_ax, imu_ay, imu_az;
+volatile int32_t imu_gx, imu_gy, imu_gz;
+
+volatile uint32_t gimbal_heartbeat_count = 0U;
+volatile uint32_t gimbal_tick_hz = 0U;
+
+extern TIM_HandleTypeDef htim2;
+extern TIM_HandleTypeDef htim3;
+
+volatile uint32_t servo_test_allowed = 0U;
+volatile uint32_t servo_test_state = 0U;
+volatile uint32_t servo_test_pulse = 1500U;
+
+static osSemaphoreId_t sample_semaphore;
+static QueueHandle_t report_queue;
+
+static GyroBias gyro_calibration;
+
+static Attitude attitude_state = {
+    .correction_gain = 2.0F
+};
+
+volatile uint32_t sample_trigger_overflow = 0U;
+volatile uint32_t report_drop_count = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_I2C1_Init(void);
+static void MX_USART2_UART_Init(void);
+void StartDefaultTask(void *argument);
+
 /* USER CODE BEGIN PFP */
 void run_f103_servo_demo(UART_HandleTypeDef* uart_handle,
                          TIM_HandleTypeDef* timer_handle);
+void gimbal_sample_timer_irq(void);
+static void GimbalTelemetryTask(void *argument);
+void gimbal_servo_test_task(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* MPU6050 的原始数据是 16 位有符号、大端 */
+static int32_t imu_decode_be(const uint8_t *bytes)
+{
+    uint32_t value = ((uint32_t)bytes[0] << 8) | bytes[1];
 
+    return value >= 32768U
+        ? (int32_t)value - 65536
+        : (int32_t)value;
+}
 /* USER CODE END 0 */
 
 /**
@@ -92,11 +188,49 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_TIM2_Init();
   MX_TIM3_Init();
   MX_USART1_UART_Init();
+  MX_I2C1_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  run_f103_servo_demo(&huart1, &htim3);
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of defaultTask */
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -148,10 +282,89 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
   */
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 63;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 9999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
 static void MX_TIM3_Init(void)
 {
 
@@ -171,7 +384,7 @@ static void MX_TIM3_Init(void)
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 19999;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
   {
     Error_Handler();
@@ -196,6 +409,10 @@ static void MX_TIM3_Init(void)
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -240,6 +457,39 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 9600;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -252,6 +502,7 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -259,8 +510,331 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void gimbal_sample_timer_irq(void)
+{
+    if (sample_semaphore != NULL) {
+        if (osSemaphoreRelease(sample_semaphore) != osOK) {
+            ++sample_trigger_overflow;
+        }
+    }
+}
 
+static void GimbalTelemetryTask(void *argument)
+{
+    (void)argument;
+    ImuReport report;
+    char line[256];
+
+    for (;;) {
+        if (xQueueReceive(report_queue, &report,
+                          portMAX_DELAY) != pdPASS) {
+            Error_Handler();
+        }
+
+        int length = snprintf(
+            line, sizeof(line),
+            "N=%lu ERR=%lu DT=%lu..%lu MISS=%lu "
+            "BAD=%lu LAST=%lu AT=%lu "
+            "SV=%lu US=%lu "
+            "CAL=%lu ATT=%lu RPY=%ld,%ld,%ld\r\n",
+            (unsigned long)report.count,
+            (unsigned long)report.errors,
+            (unsigned long)report.dt_min,
+            (unsigned long)report.dt_max,
+            (unsigned long)report.missed,
+            (unsigned long)report.dt_bad_total,
+            (unsigned long)report.dt_last_bad,
+            (unsigned long)report.dt_bad_at_sample,
+            (unsigned long)report.servo_state,
+            (unsigned long)report.servo_pulse,
+            (unsigned long)report.calibration_ready,
+            (unsigned long)report.attitude_status,
+            (long)report.angle_mdeg[0],
+            (long)report.angle_mdeg[1],
+            (long)report.angle_mdeg[2]);
+
+        if (length <= 0 || length >= (int)sizeof(line)) {
+            Error_Handler();
+        }
+        HAL_StatusTypeDef tx = HAL_BUSY;
+        for (unsigned attempt = 0U; attempt < 5U; ++attempt) {
+            tx = HAL_UART_Transmit(&huart2, (uint8_t *)line,
+                                   (uint16_t)length, 200U);
+            if (tx != HAL_BUSY) {
+                break;
+            }
+            (void)osDelay(5U);
+        }
+        if (tx != HAL_OK) {
+            Error_Handler();
+        }
+    }
+}
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void *argument)
+{
+    (void)argument;
+    const uint16_t address = 0x68U << 1;
+    uint8_t id = 0xFFU;
+    uint8_t power = 0xFFU;
+    uint8_t wake = 0x00U;
+    uint8_t raw[14];
+    uint32_t report_divider = 0U;
+    uint32_t previous_tick = 0U;
+    uint32_t dt_min = UINT32_MAX;
+    uint32_t dt_max = 0U;
+    uint32_t dt_bad_total = 0U;
+    uint32_t dt_last_bad = 0U;
+    uint32_t dt_bad_at_sample = 0U;
+    uint8_t have_previous_tick = 0U;
+
+    gimbal_tick_hz = osKernelGetTickFreq();
+    if (gimbal_tick_hz != 1000U) {
+        Error_Handler();
+    }
+
+    osDelay(100U);
+    HAL_StatusTypeDef status = HAL_I2C_Mem_Read(
+        &hi2c1, address, 0x75U, I2C_MEMADD_SIZE_8BIT,
+        &id, 1U, 20U);
+    imu_id = id;
+
+    if (status == HAL_OK && (id == 0x68U || id == 0x74U)) {
+        status = HAL_I2C_Mem_Write(
+            &hi2c1, address, 0x6BU, I2C_MEMADD_SIZE_8BIT,
+            &wake, 1U, 20U);
+        if (status == HAL_OK) {
+            osDelay(100U);
+            status = HAL_I2C_Mem_Read(
+                &hi2c1, address, 0x6BU, I2C_MEMADD_SIZE_8BIT,
+                &power, 1U, 20U);
+        }
+    } else {
+        status = HAL_ERROR;
+    }
+
+    imu_power = power;
+    imu_init_status = status;
+    const uint8_t ready =
+        status == HAL_OK && (power & 0x40U) == 0U;
+
+    if (!ready) {
+        Error_Handler();
+    }
+
+    const uint8_t registers[] = {0x1BU, 0x1CU, 0x6CU};
+
+    for (unsigned i = 0U; i < sizeof(registers); ++i) {
+        uint8_t value = 0x00U;
+        uint8_t readback = 0xFFU;
+
+        if (HAL_I2C_Mem_Write(
+                &hi2c1, address, registers[i],
+                I2C_MEMADD_SIZE_8BIT, &value, 1U, 20U) != HAL_OK) {
+            Error_Handler();
+        }
+
+        if (HAL_I2C_Mem_Read(
+                &hi2c1, address, registers[i],
+                I2C_MEMADD_SIZE_8BIT, &readback, 1U, 20U) != HAL_OK
+            || readback != value) {
+            Error_Handler();
+        }
+    }
+
+    osDelay(100U);
+
+    sample_semaphore = osSemaphoreNew(1U, 0U, NULL);
+    report_queue = xQueueCreate(2U, sizeof(ImuReport));
+
+    if (sample_semaphore == NULL || report_queue == NULL) {
+        Error_Handler();
+    }
+
+    const osThreadAttr_t telemetry_attributes = {
+        .name = "gimbal_telemetry",
+        .stack_size = 1536U,
+        .priority = osPriorityLow
+    };
+
+    if (osThreadNew(GimbalTelemetryTask, NULL,
+                    &telemetry_attributes) == NULL) {
+        Error_Handler();
+    }
+
+    const osThreadAttr_t servo_test_attributes = {
+        .name = "servo_test",
+        .stack_size = 1024U,
+        /* Must stay below the telemetry task: HAL_UART_Receive busy-waits
+           and would otherwise starve it. */
+        .priority = osPriorityIdle
+    };
+
+    if (osThreadNew(gimbal_servo_test_task, &htim3,
+                    &servo_test_attributes) == NULL) {
+        Error_Handler();
+    }
+
+    __HAL_TIM_SET_COUNTER(&htim2, 0U);
+    __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
+
+    if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK) {
+        Error_Handler();
+    }
+
+    for (;;) {
+        if (osSemaphoreAcquire(
+                sample_semaphore, osWaitForever) != osOK) {
+            Error_Handler();
+        }
+
+        uint32_t now = osKernelGetTickCount();
+        const uint32_t elapsed_ticks =
+            have_previous_tick ? now - previous_tick : 10U;
+        if (have_previous_tick) {
+            uint32_t dt = now - previous_tick;
+
+            if (dt < dt_min) dt_min = dt;
+            if (dt > dt_max) dt_max = dt;
+
+            if (dt != 10U) {
+                ++dt_bad_total;
+                dt_last_bad = dt;
+                dt_bad_at_sample = imu_sample_count + 1U;
+            }
+        }
+        previous_tick = now;
+        have_previous_tick = 1U;
+
+        imu_read_status = HAL_I2C_Mem_Read(
+            &hi2c1, address, 0x3BU, I2C_MEMADD_SIZE_8BIT,
+            raw, sizeof(raw), 20U);
+
+        if (imu_read_status == HAL_OK) {
+            imu_ax = imu_decode_be(raw);
+            imu_ay = imu_decode_be(raw + 2);
+            imu_az = imu_decode_be(raw + 4);
+            imu_gx = imu_decode_be(raw + 8);
+            imu_gy = imu_decode_be(raw + 10);
+            imu_gz = imu_decode_be(raw + 12);
+            ++imu_sample_count;
+
+            const int32_t accel[3] = {imu_ax, imu_ay, imu_az};
+            const int32_t gyro[3] = {imu_gx, imu_gy, imu_gz};
+
+            gyro_bias_update(&gyro_calibration, accel, gyro);
+
+            if (gyro_calibration.ready) {
+                const float accel_g[3] = {
+                    imu_ax / 16384.0F,
+                    imu_ay / 16384.0F,
+                    imu_az / 16384.0F
+                };
+                const float gyro_dps[3] = {
+                    (imu_gx - gyro_calibration.mean[0]) / 131.0F,
+                    (imu_gy - gyro_calibration.mean[1]) / 131.0F,
+                    (imu_gz - gyro_calibration.mean[2]) / 131.0F
+                };
+
+                attitude_update(&attitude_state, accel_g, gyro_dps,
+                                elapsed_ticks / (float)gimbal_tick_hz);
+            }
+        } else {
+            ++imu_error_count;
+
+            if (!gyro_calibration.ready) {
+                gyro_bias_reset(&gyro_calibration);
+            }
+
+            if (attitude_state.status == 1U) {
+                attitude_state.status = 2U;
+            }
+        }
+
+        servo_test_allowed =
+            gyro_calibration.ready &&
+            attitude_state.status == 1U &&
+            imu_read_status == HAL_OK &&
+            sample_trigger_overflow == 0U;
+
+        if (++report_divider >= 100U) {
+            report_divider = 0U;
+            ImuReport report = {
+                .count = imu_sample_count,
+                .errors = imu_error_count,
+                .dt_min = dt_min,
+                .dt_max = dt_max,
+                .dt_bad_total = dt_bad_total,
+                .dt_last_bad = dt_last_bad,
+                .dt_bad_at_sample = dt_bad_at_sample,
+                .servo_state = servo_test_state,
+                .servo_pulse = servo_test_pulse,
+                .missed = sample_trigger_overflow,
+                .calibration_ready = gyro_calibration.ready,
+                .calibration_count = gyro_calibration.count,
+                .attitude_status = attitude_state.status,
+                .angle_mdeg = {
+                    (int32_t)(attitude_state.roll * 1000.0F),
+                    (int32_t)(attitude_state.pitch * 1000.0F),
+                    (int32_t)(attitude_state.yaw * 1000.0F)
+                },
+                .bias = {
+                    (int32_t)gyro_calibration.mean[0],
+                    (int32_t)gyro_calibration.mean[1],
+                    (int32_t)gyro_calibration.mean[2]
+                },
+                .rate_mdeg = {
+                    gyro_bias_rate_mdeg(&gyro_calibration, 0U, imu_gx),
+                    gyro_bias_rate_mdeg(&gyro_calibration, 1U, imu_gy),
+                    gyro_bias_rate_mdeg(&gyro_calibration, 2U, imu_gz)
+                },
+                .accel = {imu_ax, imu_ay, imu_az},
+                .gyro = {imu_gx, imu_gy, imu_gz}
+            };
+
+            if (xQueueSend(report_queue, &report, 0U) != pdPASS) {
+                ++report_drop_count;
+            }
+
+            dt_min = UINT32_MAX;
+            dt_max = 0U;
+        }
+    }
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM4 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM4)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+  if (htim->Instance == TIM2)
+  {
+    gimbal_sample_timer_irq();
+  }
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

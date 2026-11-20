@@ -1,5 +1,7 @@
 # Framework Acceptance Record
 
+Current F103 gimbal measurements are recorded in [gimbal.md](gimbal.md). Earlier results below describe the framework baseline.
+
 Updated: 2026-11-16
 
 ## Targets

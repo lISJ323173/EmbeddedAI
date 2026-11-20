@@ -1,5 +1,7 @@
 # Porting and Build Guide
 
+The current F103 gimbal build entry and hardware connections are documented in [gimbal.md](gimbal.md).
+
 ## Prerequisites
 
 - CMake 3.22 or newer and Ninja.

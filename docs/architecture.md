@@ -1,5 +1,7 @@
 # Architecture
 
+Current F103 gimbal architecture and progress are documented in [gimbal.md](gimbal.md).
+
 ## Purpose
 
 The framework separates chip-specific startup, peripheral access, device behavior,

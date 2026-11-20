@@ -40,6 +40,9 @@ add_subdirectory(cmake/stm32cubemx)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     src/f103_servo_demo.cpp
     src/stm32_pwm.cpp
+    src/gimbal_servo_test.cpp
+    ../../module/src/gyro_bias.cpp
+    ../../module/src/attitude.cpp
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
