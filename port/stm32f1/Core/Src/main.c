@@ -150,6 +150,9 @@ int gimbal_pitch_init(void);
 void gimbal_pitch_tick(void *argument,
                        float roll_deg,
                        float dt_seconds);
+void gimbal_yaw_tick(void *argument,
+                     float yaw_deg,
+                     float dt_seconds);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -792,6 +795,8 @@ void StartDefaultTask(void *argument)
 
         gimbal_pitch_tick(
             &htim3, attitude_state.roll, control_dt);
+        gimbal_yaw_tick(
+            &htim3, attitude_state.yaw, control_dt);
 
         if (++report_divider >= 100U) {
             report_divider = 0U;
