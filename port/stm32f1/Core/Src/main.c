@@ -128,6 +128,18 @@ volatile uint32_t sample_trigger_overflow = 0U;
 volatile uint32_t report_drop_count = 0U;
 /* Temporary fault injection: 0=none, 1=inhibit, 2=invalid dt. */
 volatile uint32_t gimbal_test_fault = 0U;
+/* Corrected gyro mean, unit: 0.001 degree/second. */
+volatile int32_t gyro_mean_mdps[3] = {0, 0, 0};
+volatile uint32_t gyro_mean_window_count = 0U;
+
+volatile uint32_t gyro_recalibrate_request = 0U;
+volatile uint32_t gyro_recalibration_status = 0U;
+
+extern volatile uint32_t pitch_test_state;
+extern volatile uint32_t pitch_zero_ready;
+extern volatile uint32_t yaw_reference_ready;
+
+static uint32_t gyro_mean_restart = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -604,6 +616,8 @@ void StartDefaultTask(void *argument)
     uint32_t dt_last_bad = 0U;
     uint32_t dt_bad_at_sample = 0U;
     uint8_t have_previous_tick = 0U;
+    const uint32_t imu_warmup_start_tick =
+        osKernelGetTickCount();
 
     gimbal_tick_hz = osKernelGetTickFreq();
     if (gimbal_tick_hz != 1000U) {
@@ -727,6 +741,33 @@ void StartDefaultTask(void *argument)
         previous_tick = now;
         have_previous_tick = 1U;
 
+        if (gyro_recalibrate_request) {
+            gyro_recalibrate_request = 0U;
+
+            if (pitch_test_state == 1U ||
+                servo_test_state == 1U) {
+                gyro_recalibration_status = 2U;
+            } else if ((uint32_t)(
+                    osKernelGetTickCount() - imu_warmup_start_tick)
+                    < 30U * gimbal_tick_hz) {
+                gyro_recalibration_status = 3U;
+            } else {
+                gyro_bias_reset(&gyro_calibration);
+                attitude_state =
+                    (Attitude){.correction_gain = 2.0F};
+
+                pitch_zero_ready = 0U;
+                yaw_reference_ready = 0U;
+                gyro_mean_restart = 1U;
+                gyro_mean_window_count = 0U;
+                gyro_mean_mdps[0] = 0;
+                gyro_mean_mdps[1] = 0;
+                gyro_mean_mdps[2] = 0;
+
+                gyro_recalibration_status = 4U;
+            }
+        }
+
         imu_read_status = HAL_I2C_Mem_Read(
             &hi2c1, address, 0x3BU, I2C_MEMADD_SIZE_8BIT,
             raw, sizeof(raw), 20U);
@@ -757,6 +798,32 @@ void StartDefaultTask(void *argument)
                     (imu_gz - gyro_calibration.mean[2]) / 131.0F
                 };
 
+                static float gyro_sum_dps[3] = {0};
+                static uint32_t gyro_mean_samples = 0U;
+
+                if (gyro_mean_restart) {
+                    gyro_sum_dps[0] = 0.0F;
+                    gyro_sum_dps[1] = 0.0F;
+                    gyro_sum_dps[2] = 0.0F;
+                    gyro_mean_samples = 0U;
+                    gyro_mean_restart = 0U;
+                }
+
+                for (unsigned axis = 0U; axis < 3U; ++axis) {
+                    gyro_sum_dps[axis] += gyro_dps[axis];
+                }
+
+                if (++gyro_mean_samples >= 1000U) {
+                    for (unsigned axis = 0U; axis < 3U; ++axis) {
+                        /* 1000 samples: mean * 1000 = sum. */
+                        gyro_mean_mdps[axis] =
+                            (int32_t)gyro_sum_dps[axis];
+                        gyro_sum_dps[axis] = 0.0F;
+                    }
+                    gyro_mean_samples = 0U;
+                    ++gyro_mean_window_count;
+                }
+
                 attitude_update(&attitude_state, accel_g, gyro_dps,
                                 elapsed_ticks / (float)gimbal_tick_hz);
             }
@@ -770,6 +837,11 @@ void StartDefaultTask(void *argument)
             if (attitude_state.status == 1U) {
                 attitude_state.status = 2U;
             }
+        }
+
+        if (gyro_recalibration_status == 4U &&
+            gyro_calibration.ready) {
+            gyro_recalibration_status = 5U;
         }
 
         servo_test_allowed =

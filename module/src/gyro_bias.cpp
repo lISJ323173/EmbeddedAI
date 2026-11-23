@@ -1,6 +1,11 @@
 #include "module/gyro_bias.h"
 #include <cmath>
 
+namespace {
+constexpr uint32_t calibration_samples = 1000U;
+constexpr float max_stddev_raw = 65.5F; // 0.5 degree/second
+}
+
 void gyro_bias_reset(GyroBias *state)
 {
     *state = {};
@@ -38,9 +43,12 @@ void gyro_bias_update(GyroBias *state,
         state->m2[i] += delta * (gyro[i] - state->mean[i]);
     }
 
-    if (state->count == 300U) {
+    if (state->count >= calibration_samples) {
         for (unsigned i = 0; i < 3; ++i) {
-            if (state->m2[i] / 299.0F > 4290.25F) {
+            const float variance =
+                state->m2[i] / (state->count - 1U);
+
+            if (variance > max_stddev_raw * max_stddev_raw) {
                 gyro_bias_reset(state);
                 return;
             }

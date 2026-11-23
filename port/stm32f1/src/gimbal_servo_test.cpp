@@ -11,6 +11,8 @@ extern volatile uint32_t servo_test_allowed;
 extern volatile uint32_t servo_test_state;
 extern volatile uint32_t servo_test_pulse;
 extern volatile uint32_t gimbal_test_fault;
+extern volatile uint32_t gyro_recalibrate_request;
+extern volatile uint32_t gyro_recalibration_status;
 volatile int32_t pitch_target_mdeg = 20000;
 volatile int32_t pitch_error_mdeg = 0;
 volatile uint32_t pitch_closed_loop_enabled = 0U;
@@ -137,6 +139,7 @@ void update_pitch_pi(port::Stm32PwmCh1& pwm,
 constexpr uint32_t yaw_start_flag = 1U;
 constexpr uint32_t yaw_stop_flag = 2U;
 constexpr uint32_t yaw_hold_flag = 4U;
+constexpr uint32_t pitch_stop_flag = 8U;
 constexpr float yaw_kp = 4.0F; // us/deg
 constexpr float yaw_ki = 8.0F; // us/(deg*s)
 constexpr float yaw_deadband_deg = 1.5F;
@@ -292,7 +295,11 @@ extern "C" void gimbal_yaw_tick(void *argument,
     }
 
     if (!yaw_active && start_requested) {
-        if (pitch_test_state == 1U ||
+        const bool pitch_blocks_start =
+            pitch_test_state == 1U &&
+            (!hold_requested || !pitch_closed_loop_enabled);
+
+        if (pitch_blocks_start ||
             (hold_requested && servo_test_pulse != 1500U)) {
             servo_test_state = 3U;
             return;
@@ -398,6 +405,20 @@ extern "C" void gimbal_pitch_tick(void *argument,
         return;
     }
 
+    const uint32_t stop_event = osEventFlagsWait(
+        yaw_events, pitch_stop_flag, osFlagsWaitAny, 0U);
+
+    if ((stop_event & osFlagsError) != 0U) {
+        if (stop_event != osFlagsErrorResource &&
+            stop_event != osFlagsErrorTimeout) {
+            finish_pitch(pitch, 4U);
+            return;
+        }
+    } else if ((stop_event & pitch_stop_flag) != 0U) {
+        finish_pitch(pitch, 0U);
+        return;
+    }
+
     if (received == osOK && request == 'X') {
         finish_pitch(pitch, 0U);
         return;
@@ -451,6 +472,14 @@ extern "C" void gimbal_pitch_tick(void *argument,
         if (request != 'P' && request != 'C') return;
 
         if (request == 'C' && !pitch_zero_ready) {
+            pitch_test_state = 3U;
+            return;
+        }
+
+        if (servo_test_state == 1U &&
+            (request != 'C' ||
+             !yaw_closed_loop_enabled ||
+             !yaw_reference_ready)) {
             pitch_test_state = 3U;
             return;
         }
@@ -554,6 +583,17 @@ extern "C" void gimbal_servo_test_task(void *argument)
         }
 #endif
 
+        if (command == 'B') {
+            if (pitch_test_state == 1U ||
+                servo_test_state == 1U) {
+                gyro_recalibration_status = 2U;
+            } else {
+                gyro_recalibration_status = 1U;
+                gyro_recalibrate_request = 1U;
+            }
+            continue;
+        }
+
         if (command != 'P' && command != 'Y' &&
             command != 'Z' && command != 'C' &&
             command != 'X' && command != 'H') {
@@ -561,21 +601,25 @@ extern "C" void gimbal_servo_test_task(void *argument)
         }
 
         if (command == 'X') {
-            const uint32_t flags =
-                osEventFlagsSet(yaw_events, yaw_stop_flag);
-            yaw_request_status =
+            const uint32_t flags = osEventFlagsSet(
+                yaw_events, yaw_stop_flag | pitch_stop_flag);
+
+            const uint32_t status =
                 (flags & osFlagsError) != 0U ? 3U : 1U;
 
-            const auto sent = osMessageQueuePut(
-                pitch_requests, &command, 0U, 0U);
-            pitch_request_status = sent == osOK ? 1U
-                : sent == osErrorResource ? 2U : 3U;
+            yaw_request_status = status;
+            pitch_request_status = status;
             continue;
         }
 
         if (command == 'Y' || command == 'H') {
+            const bool pitch_blocks_command =
+                pitch_test_state == 1U &&
+                (command != 'H' ||
+                 !pitch_closed_loop_enabled);
+
             if (!servo_test_allowed ||
-                pitch_test_state == 1U ||
+                pitch_blocks_command ||
                 servo_test_state == 1U ||
                 (command == 'H' && servo_test_pulse != 1500U)) {
                 yaw_request_status = 2U;
@@ -594,9 +638,15 @@ extern "C" void gimbal_servo_test_task(void *argument)
 
         if (command == 'P' || command == 'Z' ||
             command == 'C') {
+            const bool yaw_blocks_command =
+                servo_test_state == 1U &&
+                (command != 'C' ||
+                 !yaw_closed_loop_enabled ||
+                 !yaw_reference_ready);
+
             if (!servo_test_allowed ||
                 pitch_test_state == 1U ||
-                servo_test_state == 1U) {
+                yaw_blocks_command) {
                 if (command == 'Z') {
                     pitch_zero_status = 2U;
                 } else {
