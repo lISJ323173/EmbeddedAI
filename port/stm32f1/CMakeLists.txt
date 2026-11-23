@@ -43,6 +43,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     src/gimbal_servo_test.cpp
     ../../module/src/gyro_bias.cpp
     ../../module/src/attitude.cpp
+    ../../module/src/pitch_map.cpp
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

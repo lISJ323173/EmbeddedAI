@@ -126,6 +126,8 @@ static Attitude attitude_state = {
 
 volatile uint32_t sample_trigger_overflow = 0U;
 volatile uint32_t report_drop_count = 0U;
+/* Temporary fault injection: 0=none, 1=inhibit, 2=invalid dt. */
+volatile uint32_t gimbal_test_fault = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -144,6 +146,10 @@ void run_f103_servo_demo(UART_HandleTypeDef* uart_handle,
 void gimbal_sample_timer_irq(void);
 static void GimbalTelemetryTask(void *argument);
 void gimbal_servo_test_task(void *argument);
+int gimbal_pitch_init(void);
+void gimbal_pitch_tick(void *argument,
+                       float roll_deg,
+                       float dt_seconds);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -670,6 +676,10 @@ void StartDefaultTask(void *argument)
         Error_Handler();
     }
 
+    if (!gimbal_pitch_init()) {
+        Error_Handler();
+    }
+
     const osThreadAttr_t servo_test_attributes = {
         .name = "servo_test",
         .stack_size = 1024U,
@@ -764,6 +774,24 @@ void StartDefaultTask(void *argument)
             attitude_state.status == 1U &&
             imu_read_status == HAL_OK &&
             sample_trigger_overflow == 0U;
+
+#if GIMBAL_ENABLE_FAULT_INJECTION
+        servo_test_allowed =
+            servo_test_allowed && gimbal_test_fault != 1U;
+#endif
+
+        /* P-axis PWM has one owner: this 100 Hz sampling task. */
+        float control_dt =
+            elapsed_ticks / (float)gimbal_tick_hz;
+
+#if GIMBAL_ENABLE_FAULT_INJECTION
+        if (gimbal_test_fault == 2U) {
+            control_dt = 0.030F;
+        }
+#endif
+
+        gimbal_pitch_tick(
+            &htim3, attitude_state.roll, control_dt);
 
         if (++report_divider >= 100U) {
             report_divider = 0U;
