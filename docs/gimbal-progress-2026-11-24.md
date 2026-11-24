@@ -29,3 +29,21 @@
 - 真实 I2C 通信故障退出尚未验收。
 - Y 轨迹目前保留诊断用的直接阶跃版本，尚未恢复平滑轨迹。
 - 后续检查双轴故障退出，并整理控制与调试代码。
+
+## I2C 读事务故障退出（2026-11-24 补充）
+
+在双轴 `C + H` 运行中，用测试地址 `0x67` 制造地址无应答：
+
+- `imu_read_status = HAL_ERROR`，`imu_last_i2c_error = 0x04`（`HAL_I2C_ERROR_AF`）
+- `ATT` 立即锁为 2，`servo_test_allowed = 0`
+- 两轴退出：`enabled = 0/0`、`state = 4/4`、`CC1E/CC2E = 0/0`
+- 写入次数停在 P=292、Y=1，`pwm_errors` 不增加
+- 采样计数停止增长，`ERR` 每秒增加约 100
+
+`R` 恢复读取后：`imu_read_status` 回到 `HAL_OK`、`servo_test_allowed = 1`，
+但 `ATT` 仍为 2、两轴 `state` 仍为 4，**不会自动重启闭环**。
+随后 `B` 重新校准，`CAL=1`、`ATT=1` 恢复，两轴仍保持停止。
+
+故障注入宏 `GIMBAL_ENABLE_FAULT_INJECTION` 已恢复为 `0`。
+`imu_last_i2c_error` 保留为常驻诊断量。
+本次只验证"地址无应答"，总线卡死、SCL 被拉低等故障尚未覆盖。

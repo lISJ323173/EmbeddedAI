@@ -128,6 +128,7 @@ volatile uint32_t sample_trigger_overflow = 0U;
 volatile uint32_t report_drop_count = 0U;
 /* Temporary fault injection: 0=none, 1=inhibit, 2=invalid dt. */
 volatile uint32_t gimbal_test_fault = 0U;
+volatile uint32_t imu_last_i2c_error = 0U;
 /* Corrected gyro mean, unit: 0.001 degree/second. */
 volatile int32_t gyro_mean_mdps[3] = {0, 0, 0};
 volatile uint32_t gyro_mean_window_count = 0U;
@@ -768,8 +769,16 @@ void StartDefaultTask(void *argument)
             }
         }
 
+        uint16_t sample_address = address;
+
+#if GIMBAL_ENABLE_FAULT_INJECTION
+        if (gimbal_test_fault == 3U) {
+            sample_address = 0x67U << 1;
+        }
+#endif
+
         imu_read_status = HAL_I2C_Mem_Read(
-            &hi2c1, address, 0x3BU, I2C_MEMADD_SIZE_8BIT,
+            &hi2c1, sample_address, 0x3BU, I2C_MEMADD_SIZE_8BIT,
             raw, sizeof(raw), 20U);
 
         if (imu_read_status == HAL_OK) {
@@ -829,6 +838,7 @@ void StartDefaultTask(void *argument)
             }
         } else {
             ++imu_error_count;
+            imu_last_i2c_error = hi2c1.ErrorCode;
 
             if (!gyro_calibration.ready) {
                 gyro_bias_reset(&gyro_calibration);

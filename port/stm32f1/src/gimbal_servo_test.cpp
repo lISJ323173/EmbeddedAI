@@ -576,9 +576,11 @@ extern "C" void gimbal_servo_test_task(void *argument)
 #if GIMBAL_ENABLE_FAULT_INJECTION
         if (command == 'F' ||
             command == 'T' ||
+            command == 'I' ||
             command == 'R') {
             gimbal_test_fault = command == 'F' ? 1U
-                : command == 'T' ? 2U : 0U;
+                : command == 'T' ? 2U
+                : command == 'I' ? 3U : 0U;
             continue;
         }
 #endif
