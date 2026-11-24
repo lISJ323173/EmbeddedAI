@@ -44,3 +44,13 @@
 - 故障注入关闭后 `I` 被忽略，`gimbal_test_fault` 已被链接器移除，
   `imu_last_i2c_error` 保持 0，采样与姿态不受影响。
 - `imu_last_i2c_error` 保留为常驻诊断量（不受注入宏保护）。
+
+## 控制代码拆分
+- gimbal_state.cpp：观测量与通信对象定义。
+- gimbal_command.cpp：初始化、蓝牙接收与命令提交。
+- gimbal_pitch.cpp：P 轴状态机、PI 和轨迹。
+- gimbal_yaw.cpp：Y 轴状态机、PI、预定位与轨迹。
+- 公共接口和 main.c 保持不变。
+- 双轴运行使能及通道开启正常。
+- X 后双轴停止，写入次数不再增加。
+- PWM 错误数 0/0，DT=10..10，MISS=0。
