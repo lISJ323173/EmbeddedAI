@@ -30,20 +30,17 @@
 - Y 轨迹目前保留诊断用的直接阶跃版本，尚未恢复平滑轨迹。
 - 后续检查双轴故障退出，并整理控制与调试代码。
 
-## I2C 读事务故障退出（2026-11-24 补充）
+## I2C NACK 故障退出
+- 测试地址无应答，返回 HAL_ERROR / HAL_I2C_ERROR_AF（0x04）。
+- ATT=2、allowed=0，两轴 enabled=0，state=4。
+- CC1E/CC2E=0/0，两轴写入次数停止。
+- PWM 错误数均为 0；DT=10..10，MISS=0。
+- R 恢复地址后不自动启动；B 后 CAL/ATT=1/1。
+- 故障注入默认关闭。
+- 总线卡死、通信超时尚未验收。
 
-在双轴 `C + H` 运行中，用测试地址 `0x67` 制造地址无应答：
-
-- `imu_read_status = HAL_ERROR`，`imu_last_i2c_error = 0x04`（`HAL_I2C_ERROR_AF`）
-- `ATT` 立即锁为 2，`servo_test_allowed = 0`
-- 两轴退出：`enabled = 0/0`、`state = 4/4`、`CC1E/CC2E = 0/0`
-- 写入次数停在 P=292、Y=1，`pwm_errors` 不增加
-- 采样计数停止增长，`ERR` 每秒增加约 100
-
-`R` 恢复读取后：`imu_read_status` 回到 `HAL_OK`、`servo_test_allowed = 1`，
-但 `ATT` 仍为 2、两轴 `state` 仍为 4，**不会自动重启闭环**。
-随后 `B` 重新校准，`CAL=1`、`ATT=1` 恢复，两轴仍保持停止。
-
-故障注入宏 `GIMBAL_ENABLE_FAULT_INJECTION` 已恢复为 `0`。
-`imu_last_i2c_error` 保留为常驻诊断量。
-本次只验证"地址无应答"，总线卡死、SCL 被拉低等故障尚未覆盖。
+补充：
+- 实测写入次数停在 P=292、Y=1；故障期间采样计数停止增长、ERR 每秒 +100。
+- 故障注入关闭后 `I` 被忽略，`gimbal_test_fault` 已被链接器移除，
+  `imu_last_i2c_error` 保持 0，采样与姿态不受影响。
+- `imu_last_i2c_error` 保留为常驻诊断量（不受注入宏保护）。
