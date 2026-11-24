@@ -28,12 +28,21 @@ constexpr float pitch_deadband_deg = 1.5F;
 
 float pitch_integral_us = 0.0F;
 
-void finish_pitch(port::Stm32PwmCh1& pwm, uint32_t state)
+void finish_pitch(
+    port::Stm32PwmCh1& pwm,
+    uint32_t state,
+    uint32_t reason = GIMBAL_FAULT_UNKNOWN)
 {
+    if (state == GIMBAL_AXIS_FAULT) {
+        pitch_last_fault = reason;
+    }
+
     if (pwm.stop() != bsp::Error::Ok) {
         ++pitch_pwm_errors;
-        state = 4U;
+        pitch_last_fault = GIMBAL_FAULT_PWM_STOP;
+        state = GIMBAL_AXIS_FAULT;
     }
+
     pitch_active = false;
     pitch_closed_loop_enabled = 0U;
     pitch_test_state = state;
@@ -42,12 +51,12 @@ void finish_pitch(port::Stm32PwmCh1& pwm, uint32_t state)
 bool write_pitch(port::Stm32PwmCh1& pwm, uint32_t pulse)
 {
     if (pulse < 1500U || pulse > 2500U) {
-        finish_pitch(pwm, 4U);
+        finish_pitch(pwm, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_PULSE_RANGE);
         return false;
     }
     if (pwm.set_pulse_us(pulse) != bsp::Error::Ok) {
         ++pitch_pwm_errors;
-        finish_pitch(pwm, 4U);
+        finish_pitch(pwm, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_PWM_WRITE);
         return false;
     }
     pitch_test_pulse = pulse;
@@ -113,7 +122,8 @@ extern "C" void gimbal_pitch_tick(void *argument,
         pitch_requests, &request, nullptr, 0U);
 
     if (received != osOK && received != osErrorResource) {
-        finish_pitch(pitch, 4U);
+        finish_pitch(
+            pitch, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_TRANSPORT);
         return;
     }
 
@@ -123,29 +133,38 @@ extern "C" void gimbal_pitch_tick(void *argument,
     if ((stop_event & osFlagsError) != 0U) {
         if (stop_event != osFlagsErrorResource &&
             stop_event != osFlagsErrorTimeout) {
-            finish_pitch(pitch, 4U);
+            finish_pitch(
+                pitch, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_TRANSPORT);
             return;
         }
     } else if ((stop_event & pitch_stop_flag) != 0U) {
-        finish_pitch(pitch, 0U);
+        finish_pitch(pitch, GIMBAL_AXIS_IDLE);
         return;
     }
 
     if (received == osOK && request == 'X') {
-        finish_pitch(pitch, 0U);
+        finish_pitch(pitch, GIMBAL_AXIS_IDLE);
         return;
     }
 
     if (!std::isfinite(dt_seconds) ||
         dt_seconds < 0.005F || dt_seconds > 0.020F) {
-        if (pitch_active) finish_pitch(pitch, 4U);
+        if (pitch_active) {
+            finish_pitch(
+                pitch, GIMBAL_AXIS_FAULT,
+                GIMBAL_FAULT_INVALID_PERIOD);
+        }
         return;
     }
 
     if (!std::isfinite(roll_deg)) {
         pitch_zero_ready = 0U;
         pitch_zero_status = 3U;
-        if (pitch_active) finish_pitch(pitch, 4U);
+        if (pitch_active) {
+            finish_pitch(
+                pitch, GIMBAL_AXIS_FAULT,
+                GIMBAL_FAULT_INVALID_FEEDBACK);
+        }
         return;
     }
 
@@ -173,9 +192,11 @@ extern "C" void gimbal_pitch_tick(void *argument,
 
     if (!servo_test_allowed) {
         if (pitch_active) {
-            finish_pitch(pitch, 4U);
+            finish_pitch(
+                pitch, GIMBAL_AXIS_FAULT,
+                GIMBAL_FAULT_NOT_PERMITTED);
         } else if (received == osOK) {
-            pitch_test_state = 3U;
+            pitch_test_state = GIMBAL_AXIS_REJECTED;
         }
         return;
     }
@@ -184,15 +205,15 @@ extern "C" void gimbal_pitch_tick(void *argument,
         if (request != 'P' && request != 'C') return;
 
         if (request == 'C' && !pitch_zero_ready) {
-            pitch_test_state = 3U;
+            pitch_test_state = GIMBAL_AXIS_REJECTED;
             return;
         }
 
-        if (servo_test_state == 1U &&
+        if (servo_test_state == GIMBAL_AXIS_RUNNING &&
             (request != 'C' ||
              !yaw_closed_loop_enabled ||
              !yaw_reference_ready)) {
-            pitch_test_state = 3U;
+            pitch_test_state = GIMBAL_AXIS_REJECTED;
             return;
         }
 
@@ -202,11 +223,14 @@ extern "C" void gimbal_pitch_tick(void *argument,
 
         if (pitch.start() != bsp::Error::Ok) {
             ++pitch_pwm_errors;
-            finish_pitch(pitch, 4U);
+            finish_pitch(
+                pitch, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_PWM_START);
             return;
         }
 
         if (!write_pitch(pitch, pitch_test_pulse)) return;
+
+        pitch_last_fault = GIMBAL_FAULT_NONE;
 
         if (request == 'C') {
             const float feedback = roll_deg - pitch_zero_deg;
@@ -222,7 +246,7 @@ extern "C" void gimbal_pitch_tick(void *argument,
         }
 
         pitch_active = true;
-        pitch_test_state = 1U;
+        pitch_test_state = GIMBAL_AXIS_RUNNING;
         return;
     }
 
@@ -230,7 +254,9 @@ extern "C" void gimbal_pitch_tick(void *argument,
 
     if (pitch_closed_loop_enabled) {
         if (!pitch_zero_ready) {
-            finish_pitch(pitch, 4U);
+            finish_pitch(
+                pitch, GIMBAL_AXIS_FAULT,
+                GIMBAL_FAULT_REFERENCE_MISSING);
             return;
         }
 
@@ -259,7 +285,7 @@ extern "C" void gimbal_pitch_tick(void *argument,
 
         if (pitch_index >=
             sizeof(pitch_pulses) / sizeof(pitch_pulses[0])) {
-            finish_pitch(pitch, 2U);
+            finish_pitch(pitch, GIMBAL_AXIS_COMPLETED);
         }
     }
 }

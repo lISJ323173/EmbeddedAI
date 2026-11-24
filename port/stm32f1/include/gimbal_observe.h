@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "gimbal_status.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +44,9 @@ extern volatile uint32_t yaw_reference_ready;
 extern volatile uint32_t bluetooth_rx_errors;
 extern volatile uint32_t bluetooth_rx_busy_count;
 extern volatile uint32_t bluetooth_rx_last_error;
+
+extern volatile uint32_t pitch_last_fault;
+extern volatile uint32_t yaw_last_fault;
 
 #ifdef __cplusplus
 }

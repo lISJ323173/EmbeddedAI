@@ -54,3 +54,14 @@
 - 双轴运行使能及通道开启正常。
 - X 后双轴停止，写入次数不再增加。
 - PWM 错误数 0/0，DT=10..10，MISS=0。
+
+## 统一轴状态与故障原因
+- 轴状态数值保持不变：
+  IDLE=0、RUNNING=1、COMPLETED=2、REJECTED=3、FAULT=4。
+- 增加 pitch_last_fault、yaw_last_fault。
+- T 注入后两轴 state=4，last_fault=INVALID_PERIOD（2）。
+- 两通道关闭，R/X 后保留最近故障原因。
+- 各轴成功启动后独立清除自己的故障记录。
+- PWM 错误数 0/0，DT=10..10，MISS=0。
+- 本轮实测覆盖非法周期原因，其余原因映射尚未逐项注入验证。
+- 故障注入默认关闭。

@@ -10,7 +10,7 @@ volatile int32_t pitch_target_mdeg = 20000;
 volatile int32_t pitch_error_mdeg = 0;
 volatile uint32_t pitch_closed_loop_enabled = 0U;
 
-volatile uint32_t pitch_test_state = 0U;
+volatile uint32_t pitch_test_state = GIMBAL_AXIS_IDLE;
 volatile uint32_t pitch_test_pulse = 1500U;
 volatile uint32_t pitch_pwm_updates = 0U;
 volatile uint32_t pitch_pwm_errors = 0U;
@@ -36,6 +36,9 @@ volatile int32_t yaw_feedback_max_mdeg = 0;
 volatile int32_t yaw_integral_millius = 0;
 volatile uint32_t yaw_outside_deadband_samples = 0U;
 volatile uint32_t yaw_reference_ready = 0U;
+
+volatile uint32_t pitch_last_fault = GIMBAL_FAULT_NONE;
+volatile uint32_t yaw_last_fault = GIMBAL_FAULT_NONE;
 
 }
 

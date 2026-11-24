@@ -64,8 +64,8 @@ extern "C" void gimbal_servo_test_task(void *argument)
 #endif
 
         if (command == 'B') {
-            if (pitch_test_state == 1U ||
-                servo_test_state == 1U) {
+            if (pitch_test_state == GIMBAL_AXIS_RUNNING ||
+                servo_test_state == GIMBAL_AXIS_RUNNING) {
                 gyro_recalibration_status = 2U;
             } else {
                 gyro_recalibration_status = 1U;
@@ -94,13 +94,13 @@ extern "C" void gimbal_servo_test_task(void *argument)
 
         if (command == 'Y' || command == 'H') {
             const bool pitch_blocks_command =
-                pitch_test_state == 1U &&
+                pitch_test_state == GIMBAL_AXIS_RUNNING &&
                 (command != 'H' ||
                  !pitch_closed_loop_enabled);
 
             if (!servo_test_allowed ||
                 pitch_blocks_command ||
-                servo_test_state == 1U ||
+                servo_test_state == GIMBAL_AXIS_RUNNING ||
                 (command == 'H' && servo_test_pulse != 1500U)) {
                 yaw_request_status = 2U;
                 continue;
@@ -119,13 +119,13 @@ extern "C" void gimbal_servo_test_task(void *argument)
         if (command == 'P' || command == 'Z' ||
             command == 'C') {
             const bool yaw_blocks_command =
-                servo_test_state == 1U &&
+                servo_test_state == GIMBAL_AXIS_RUNNING &&
                 (command != 'C' ||
                  !yaw_closed_loop_enabled ||
                  !yaw_reference_ready);
 
             if (!servo_test_allowed ||
-                pitch_test_state == 1U ||
+                pitch_test_state == GIMBAL_AXIS_RUNNING ||
                 yaw_blocks_command) {
                 if (command == 'Z') {
                     pitch_zero_status = 2U;

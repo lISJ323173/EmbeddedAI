@@ -22,6 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "gimbal_status.h"
 #include "main.h"
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
@@ -112,7 +113,7 @@ extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim3;
 
 volatile uint32_t servo_test_allowed = 0U;
-volatile uint32_t servo_test_state = 0U;
+volatile uint32_t servo_test_state = GIMBAL_AXIS_IDLE;
 volatile uint32_t servo_test_pulse = 1500U;
 
 static osSemaphoreId_t sample_semaphore;
@@ -746,7 +747,7 @@ void StartDefaultTask(void *argument)
             gyro_recalibrate_request = 0U;
 
             if (pitch_test_state == 1U ||
-                servo_test_state == 1U) {
+                servo_test_state == GIMBAL_AXIS_RUNNING) {
                 gyro_recalibration_status = 2U;
             } else if ((uint32_t)(
                     osKernelGetTickCount() - imu_warmup_start_tick)

@@ -36,12 +36,21 @@ uint32_t yaw_hold_ticks = 0U;
 bool yaw_reference_pending = false;
 uint32_t yaw_reference_wait_ticks = 0U;
 
-void finish_yaw(port::Stm32PwmCh1& pwm, uint32_t state)
+void finish_yaw(
+    port::Stm32PwmCh1& pwm,
+    uint32_t state,
+    uint32_t reason = GIMBAL_FAULT_UNKNOWN)
 {
+    if (state == GIMBAL_AXIS_FAULT) {
+        yaw_last_fault = reason;
+    }
+
     if (pwm.stop() != bsp::Error::Ok) {
         ++yaw_pwm_errors;
-        state = 4U;
+        yaw_last_fault = GIMBAL_FAULT_PWM_STOP;
+        state = GIMBAL_AXIS_FAULT;
     }
+
     yaw_active = false;
     yaw_closed_loop_enabled = 0U;
     yaw_reference_pending = false;
@@ -52,12 +61,12 @@ void finish_yaw(port::Stm32PwmCh1& pwm, uint32_t state)
 bool write_yaw(port::Stm32PwmCh1& pwm, uint32_t pulse)
 {
     if (pulse < 1440U || pulse > 1560U) {
-        finish_yaw(pwm, 4U);
+        finish_yaw(pwm, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_PULSE_RANGE);
         return false;
     }
     if (pwm.set_pulse_us(pulse) != bsp::Error::Ok) {
         ++yaw_pwm_errors;
-        finish_yaw(pwm, 4U);
+        finish_yaw(pwm, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_PWM_WRITE);
         return false;
     }
     servo_test_pulse = pulse;
@@ -131,14 +140,15 @@ extern "C" void gimbal_yaw_tick(void *argument,
     if ((events & osFlagsError) != 0U) {
         if (events != osFlagsErrorResource &&
             events != osFlagsErrorTimeout) {
-            finish_yaw(yaw, 4U);
+            finish_yaw(
+                yaw, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_TRANSPORT);
             return;
         }
         events = 0U;
     }
 
     if ((events & yaw_stop_flag) != 0U) {
-        finish_yaw(yaw, 0U);
+        finish_yaw(yaw, GIMBAL_AXIS_IDLE);
         return;
     }
 
@@ -153,19 +163,32 @@ extern "C" void gimbal_yaw_tick(void *argument,
         dt_seconds >= 0.005F && dt_seconds <= 0.020F;
 
     if (!permitted) {
-        if (yaw_active) finish_yaw(yaw, 4U);
-        else if (start_requested) servo_test_state = 3U;
+        if (yaw_active) {
+            uint32_t reason = GIMBAL_FAULT_NOT_PERMITTED;
+
+            if (!std::isfinite(yaw_deg)) {
+                reason = GIMBAL_FAULT_INVALID_FEEDBACK;
+            } else if (!std::isfinite(dt_seconds) ||
+                       dt_seconds < 0.005F ||
+                       dt_seconds > 0.020F) {
+                reason = GIMBAL_FAULT_INVALID_PERIOD;
+            }
+
+            finish_yaw(yaw, GIMBAL_AXIS_FAULT, reason);
+        } else if (start_requested) {
+            servo_test_state = GIMBAL_AXIS_REJECTED;
+        }
         return;
     }
 
     if (!yaw_active && start_requested) {
         const bool pitch_blocks_start =
-            pitch_test_state == 1U &&
+            pitch_test_state == GIMBAL_AXIS_RUNNING &&
             (!hold_requested || !pitch_closed_loop_enabled);
 
         if (pitch_blocks_start ||
             (hold_requested && servo_test_pulse != 1500U)) {
-            servo_test_state = 3U;
+            servo_test_state = GIMBAL_AXIS_REJECTED;
             return;
         }
 
@@ -175,17 +198,20 @@ extern "C" void gimbal_yaw_tick(void *argument,
 
         if (yaw.start() != bsp::Error::Ok) {
             ++yaw_pwm_errors;
-            finish_yaw(yaw, 4U);
+            finish_yaw(
+                yaw, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_PWM_START);
             return;
         }
         if (!write_yaw(yaw, servo_test_pulse)) return;
+
+        yaw_last_fault = GIMBAL_FAULT_NONE;
 
         yaw_reference_pending = hold_requested;
         yaw_reference_wait_ticks = 0U;
         yaw_reference_ready = 0U;
 
         yaw_active = true;
-        servo_test_state = 1U;
+        servo_test_state = GIMBAL_AXIS_RUNNING;
         return;
     }
 
@@ -252,7 +278,7 @@ extern "C" void gimbal_yaw_tick(void *argument,
 
         if (yaw_index >=
             sizeof(yaw_pulses) / sizeof(yaw_pulses[0])) {
-            finish_yaw(yaw, 2U);
+            finish_yaw(yaw, GIMBAL_AXIS_COMPLETED);
         }
     }
 }
