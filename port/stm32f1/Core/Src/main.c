@@ -22,6 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "gimbal_observe.h"
 #include "gimbal_status.h"
 #include "main.h"
 #include "cmsis_os2.h"
@@ -34,6 +35,15 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct {
+    uint32_t state;
+    uint32_t enabled;
+    uint32_t ready;
+    int32_t feedback_mdeg;
+    uint32_t pulse_us;
+    uint32_t last_fault;
+} AxisReport;
+
 typedef struct {
     uint32_t count;
     uint32_t errors;
@@ -53,6 +63,8 @@ typedef struct {
     int32_t rate_mdeg[3];
     int32_t accel[3];
     int32_t gyro[3];
+    AxisReport pitch_axis;
+    AxisReport yaw_axis;
 } ImuReport;
 /* USER CODE END PTD */
 
@@ -546,7 +558,7 @@ static void GimbalTelemetryTask(void *argument)
 {
     (void)argument;
     ImuReport report;
-    char line[256];
+    char line[384];
 
     for (;;) {
         if (xQueueReceive(report_queue, &report,
@@ -558,8 +570,10 @@ static void GimbalTelemetryTask(void *argument)
             line, sizeof(line),
             "N=%lu ERR=%lu DT=%lu..%lu MISS=%lu "
             "BAD=%lu LAST=%lu AT=%lu "
-            "SV=%lu US=%lu "
-            "CAL=%lu ATT=%lu RPY=%ld,%ld,%ld\r\n",
+            "SV=%lu US=%lu CAL=%lu ATT=%lu "
+            "RPY=%ld,%ld,%ld "
+            "P=%lu,%lu,%lu,%ld,%lu,%lu "
+            "Y=%lu,%lu,%lu,%ld,%lu,%lu\r\n",
             (unsigned long)report.count,
             (unsigned long)report.errors,
             (unsigned long)report.dt_min,
@@ -574,7 +588,19 @@ static void GimbalTelemetryTask(void *argument)
             (unsigned long)report.attitude_status,
             (long)report.angle_mdeg[0],
             (long)report.angle_mdeg[1],
-            (long)report.angle_mdeg[2]);
+            (long)report.angle_mdeg[2],
+            (unsigned long)report.pitch_axis.state,
+            (unsigned long)report.pitch_axis.enabled,
+            (unsigned long)report.pitch_axis.ready,
+            (long)report.pitch_axis.feedback_mdeg,
+            (unsigned long)report.pitch_axis.pulse_us,
+            (unsigned long)report.pitch_axis.last_fault,
+            (unsigned long)report.yaw_axis.state,
+            (unsigned long)report.yaw_axis.enabled,
+            (unsigned long)report.yaw_axis.ready,
+            (long)report.yaw_axis.feedback_mdeg,
+            (unsigned long)report.yaw_axis.pulse_us,
+            (unsigned long)report.yaw_axis.last_fault);
 
         if (length <= 0 || length >= (int)sizeof(line)) {
             Error_Handler();
@@ -582,7 +608,7 @@ static void GimbalTelemetryTask(void *argument)
         HAL_StatusTypeDef tx = HAL_BUSY;
         for (unsigned attempt = 0U; attempt < 5U; ++attempt) {
             tx = HAL_UART_Transmit(&huart2, (uint8_t *)line,
-                                   (uint16_t)length, 200U);
+                                   (uint16_t)length, 500U);
             if (tx != HAL_BUSY) {
                 break;
             }
@@ -746,7 +772,7 @@ void StartDefaultTask(void *argument)
         if (gyro_recalibrate_request) {
             gyro_recalibrate_request = 0U;
 
-            if (pitch_test_state == 1U ||
+            if (pitch_test_state == GIMBAL_AXIS_RUNNING ||
                 servo_test_state == GIMBAL_AXIS_RUNNING) {
                 gyro_recalibration_status = 2U;
             } else if ((uint32_t)(
@@ -913,7 +939,23 @@ void StartDefaultTask(void *argument)
                     gyro_bias_rate_mdeg(&gyro_calibration, 2U, imu_gz)
                 },
                 .accel = {imu_ax, imu_ay, imu_az},
-                .gyro = {imu_gx, imu_gy, imu_gz}
+                .gyro = {imu_gx, imu_gy, imu_gz},
+                .pitch_axis = {
+                    .state = pitch_test_state,
+                    .enabled = pitch_closed_loop_enabled,
+                    .ready = pitch_zero_ready,
+                    .feedback_mdeg = pitch_feedback_mdeg,
+                    .pulse_us = pitch_test_pulse,
+                    .last_fault = pitch_last_fault
+                },
+                .yaw_axis = {
+                    .state = servo_test_state,
+                    .enabled = yaw_closed_loop_enabled,
+                    .ready = yaw_reference_ready,
+                    .feedback_mdeg = yaw_feedback_mdeg,
+                    .pulse_us = servo_test_pulse,
+                    .last_fault = yaw_last_fault
+                }
             };
 
             if (xQueueSend(report_queue, &report, 0U) != pdPASS) {
