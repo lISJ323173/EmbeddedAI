@@ -13,7 +13,8 @@ class CsvRecorder:
             "state", "enabled", "ready", "feedback_mdeg",
             "pulse_us", "last_fault")
         columns = [
-            "pc_time_utc", "pc_elapsed_s", "n", "cal", "att",
+            "pc_time_utc", "pc_elapsed_s", "device_sample_ms",
+            "n", "cal", "att",
             "roll_deg", "pitch_deg", "yaw_deg"]
         columns += [
             f"{axis}_{field}"
@@ -27,11 +28,13 @@ class CsvRecorder:
         self.file.flush()
 
     def write(self, frame, raw, elapsed):
+        sample_ms = frame.get("device_sample_ms")
         row = [
             datetime.now(timezone.utc).isoformat(
                 timespec="milliseconds"),
-            f"{elapsed:.3f}", frame["n"], frame["cal"],
-            frame["att"]]
+            f"{elapsed:.3f}",
+            "" if sample_ms is None else sample_ms,
+            frame["n"], frame["cal"], frame["att"]]
         row += list(frame["rpy"])
         row += list(frame["P"]) + list(frame["Y"])
         gain = frame.get("gain_milli")

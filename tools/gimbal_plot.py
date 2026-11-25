@@ -1,6 +1,5 @@
 import argparse
 import time
-from collections import deque
 
 import matplotlib.pyplot as plt
 import serial
@@ -8,11 +7,16 @@ import serial
 from gimbal_protocol import parse_line
 from gimbal_record import CsvRecorder
 from gimbal_filter_control import FilterControl
+from gimbal_stream import GimbalStream
+from gimbal_fast_view import FastView
+from gimbal_fast_record import FastCsvRecorder
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", default="COM10")
 parser.add_argument("--baud", type=int, default=9600)
 parser.add_argument("--record", help="New CSV file to create")
+parser.add_argument(
+    "--fast-record", help="New 20 Hz angle CSV file to create")
 args = parser.parse_args()
 
 try:
@@ -22,11 +26,20 @@ try:
 except serial.SerialException as exc:
     raise SystemExit(f"Cannot open {args.port}: {exc}")
 
+recorder = None
+fast_recorder = None
 try:
-    recorder = CsvRecorder(args.record) if args.record else None
+    if args.record:
+        recorder = CsvRecorder(args.record)
+    if args.fast_record:
+        fast_recorder = FastCsvRecorder(args.fast_record)
 except OSError as exc:
     port.close()
+    if recorder is not None:
+        recorder.close()
     raise SystemExit(f"Cannot create recording: {exc}")
+
+fast_record_error = None
 
 record_error = None
 
@@ -37,13 +50,14 @@ for axis, name in zip(axes, ("Roll", "Pitch", "Yaw")):
     lines.append(axis.plot([], [], label=name)[0])
     axis.set_ylabel(f"{name} (deg)")
     axis.grid(True)
-axes[-1].set_xlabel("PC elapsed time (s)")
+axes[-1].set_xlabel("Device elapsed time (s)")
 status = fig.text(0.02, 0.98, "", va="top", fontsize=9)
 
 filter_control = FilterControl(fig, port)
 
-history = deque(maxlen=300)
-buffer = bytearray()
+stream = GimbalStream()
+fast_view = FastView()
+history = fast_view.history
 started = time.monotonic()
 last_rx = last_progress = started
 last_n = None
@@ -59,49 +73,51 @@ def axis_text(name, values):
             f"angle={angle} deg pulse={pulse} us fault={fault}")
 
 def refresh():
-    global buffer, latest, last_rx, last_progress, last_n
+    global latest, last_rx, last_progress, last_n
     global ignored, link_error
     global record_error
+    global fast_record_error
     now = time.monotonic()
 
     if link_error is None:
         try:
-            buffer.extend(port.read(min(port.in_waiting, 4096)))
-            while b"\n" in buffer:
-                raw, _, rest = buffer.partition(b"\n")
-                buffer = bytearray(rest)
+            data = port.read(min(port.in_waiting, 4096))
+            for kind, payload in stream.feed(data):
+                if kind == "fast":
+                    fast_view.accept(payload, now)
+                    if (fast_recorder is not None
+                            and fast_record_error is None):
+                        try:
+                            fast_recorder.write(
+                                payload, now - started)
+                        except OSError as exc:
+                            fast_record_error = str(exc)
+                            print(
+                                f"Fast recording failed: {exc}",
+                                flush=True)
+                    continue
+
+                raw = payload.encode("ascii")
                 try:
-                    if len(raw) > 512:
-                        raise ValueError("line too long")
                     frame = parse_line(raw)
                 except (ValueError, KeyError, UnicodeError):
                     ignored += 1
                     continue
+
                 latest = frame
                 last_rx = now
                 filter_control.accept(frame)
+
                 if recorder is not None and record_error is None:
                     try:
                         recorder.write(frame, raw, now - started)
                     except OSError as exc:
                         record_error = str(exc)
                         print(f"Recording failed: {exc}", flush=True)
+
                 if frame["n"] != last_n:
-                    if last_n is not None:
-                        if frame["n"] < last_n:
-                            history.clear()
-                        elif now - last_progress > 3.0:
-                            history.append((
-                                now - started,
-                                float("nan"),
-                                float("nan"),
-                                float("nan")))
                     last_n = frame["n"]
                     last_progress = now
-                    history.append((now - started, *frame["rpy"]))
-            if len(buffer) > 512:
-                buffer.clear()
-                ignored += 1
         except (serial.SerialException, OSError) as exc:
             link_error = str(exc)
 
@@ -112,21 +128,40 @@ def refresh():
         message, color = "WAITING FOR TELEMETRY", "darkorange"
     else:
         stale = now - last_rx > 3.0
-        stalled = now - last_progress > 3.0
+        fast_stalled = (
+            fast_view.last_progress is None
+            or now - fast_view.last_progress > 3.0)
+        stalled = now - last_progress > 3.0 or fast_stalled
         label = "NO DATA" if stale else (
             "SAMPLE STALLED" if stalled else "LIVE")
         color = "red" if stale or stalled else "black"
-        message = (f"{label}  N={latest['n']} "
+        sample_ms = latest.get("device_sample_ms")
+        device_time = "NA" if sample_ms is None else f"{sample_ms}ms"
+        message = (f"{label}  N={latest['n']} T={device_time} "
                    f"CAL={latest['cal']} ATT={latest['att']} "
                    f"ignored={ignored}\n"
                    + axis_text("P", latest["P"]) + "\n"
                    + axis_text("Y", latest["Y"]))
+
+    fast_dt = (
+        "NA" if fast_view.dt_min is None
+        else f"{fast_view.dt_min}..{fast_view.dt_max}ms")
+    message += (
+        f"\nFAST rx={fast_view.received} "
+        f"missing={fast_view.missing} dt={fast_dt} "
+        f"resets={fast_view.resets}")
 
     if record_error is not None:
         message += f"\nREC ERROR: {record_error}"
         color = "red"
     elif recorder is not None:
         message += "\nREC ON"
+
+    if fast_record_error is not None:
+        message += f"\nFAST REC ERROR: {fast_record_error}"
+        color = "red"
+    elif fast_recorder is not None:
+        message += "\nFAST REC ON (20 Hz)"
 
     status.set_text(message)
     status.set_color(color)
@@ -140,7 +175,9 @@ def refresh():
     live = (
         latest is not None and link_error is None
         and now - last_rx <= 3.0
-        and now - last_progress <= 3.0)
+        and now - last_progress <= 3.0
+        and fast_view.last_progress is not None
+        and now - fast_view.last_progress <= 3.0)
     filter_control.update(now, live)
     fig.canvas.draw_idle()
 
@@ -156,3 +193,5 @@ finally:
     port.close()
     if recorder is not None:
         recorder.close()
+    if fast_recorder is not None:
+        fast_recorder.close()

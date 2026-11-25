@@ -40,4 +40,9 @@ def parse_line(raw):
     result["gain_milli"] = gain
     result["ks"] = ks
 
+    sample_ms = int(fields["T"]) if "T" in fields else None
+    if sample_ms is not None and not 0 <= sample_ms <= 0xffffffff:
+        raise ValueError("invalid T")
+    result["device_sample_ms"] = sample_ms
+
     return result

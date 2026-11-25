@@ -69,7 +69,15 @@ typedef struct {
     uint32_t correction_gain_milli;
     uint32_t filter_status;
     uint32_t filter_count;
+    uint32_t device_sample_ms;
 } ImuReport;
+
+typedef struct {
+    uint32_t sample_ms;
+    int16_t angle_cdeg[3];
+    uint16_t sequence;
+    uint8_t flags;
+} FastReport;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -134,6 +142,9 @@ volatile uint32_t servo_test_pulse = 1500U;
 
 static osSemaphoreId_t sample_semaphore;
 static QueueHandle_t report_queue;
+static QueueHandle_t fast_queue;
+volatile uint32_t fast_drop_count = 0U;
+volatile uint32_t fast_sent_count = 0U;
 
 static GyroBias gyro_calibration;
 
@@ -558,21 +569,79 @@ void gimbal_sample_timer_irq(void)
     }
 }
 
+static void telemetry_send(uint8_t *data, uint16_t length)
+{
+    HAL_StatusTypeDef tx = HAL_BUSY;
+    for (unsigned attempt = 0U; attempt < 5U; ++attempt) {
+        tx = HAL_UART_Transmit(&huart2, data, length, 500U);
+        if (tx != HAL_BUSY) {
+            break;
+        }
+        (void)osDelay(5U);
+    }
+    if (tx != HAL_OK) {
+        Error_Handler();
+    }
+}
+
+static void fast_put_le(uint8_t *out, uint32_t value,
+                        unsigned width)
+{
+    for (unsigned i = 0U; i < width; ++i) {
+        out[i] = (uint8_t)(value >> (8U * i));
+    }
+}
+
+static void telemetry_send_fast(const FastReport *frame)
+{
+    uint8_t packet[18] = {0xA5U, 0x5AU, 1U};
+    packet[3] = frame->flags;
+    fast_put_le(packet + 4, frame->sequence, 2U);
+    fast_put_le(packet + 6, frame->sample_ms, 4U);
+
+    for (unsigned i = 0U; i < 3U; ++i) {
+        fast_put_le(packet + 10U + i * 2U,
+                    (uint16_t)frame->angle_cdeg[i], 2U);
+    }
+
+    uint16_t crc = 0xFFFFU;
+    for (unsigned i = 0U; i < 16U; ++i) {
+        crc ^= (uint16_t)((uint16_t)packet[i] << 8);
+        for (unsigned bit = 0U; bit < 8U; ++bit) {
+            if ((crc & 0x8000U) != 0U) {
+                crc = (uint16_t)((crc << 1) ^ 0x1021U);
+            } else {
+                crc = (uint16_t)(crc << 1);
+            }
+        }
+    }
+
+    fast_put_le(packet + 16, crc, 2U);
+    telemetry_send(packet, sizeof(packet));
+    ++fast_sent_count;
+}
+
 static void GimbalTelemetryTask(void *argument)
 {
     (void)argument;
     ImuReport report;
+    FastReport fast;
     char line[448];
 
     for (;;) {
-        if (xQueueReceive(report_queue, &report,
+        if (xQueueReceive(fast_queue, &fast,
                           portMAX_DELAY) != pdPASS) {
             Error_Handler();
+        }
+        telemetry_send_fast(&fast);
+
+        if (xQueueReceive(report_queue, &report, 0U) != pdPASS) {
+            continue;
         }
 
         int length = snprintf(
             line, sizeof(line),
-            "N=%lu ERR=%lu DT=%lu..%lu MISS=%lu "
+            "N=%lu T=%lu ERR=%lu DT=%lu..%lu MISS=%lu "
             "BAD=%lu LAST=%lu AT=%lu "
             "SV=%lu US=%lu CAL=%lu ATT=%lu "
             "RPY=%ld,%ld,%ld "
@@ -580,6 +649,7 @@ static void GimbalTelemetryTask(void *argument)
             "Y=%lu,%lu,%lu,%ld,%lu,%lu "
             "K=%lu KS=%lu,%lu\r\n",
             (unsigned long)report.count,
+            (unsigned long)report.device_sample_ms,
             (unsigned long)report.errors,
             (unsigned long)report.dt_min,
             (unsigned long)report.dt_max,
@@ -613,18 +683,7 @@ static void GimbalTelemetryTask(void *argument)
         if (length <= 0 || length >= (int)sizeof(line)) {
             Error_Handler();
         }
-        HAL_StatusTypeDef tx = HAL_BUSY;
-        for (unsigned attempt = 0U; attempt < 5U; ++attempt) {
-            tx = HAL_UART_Transmit(&huart2, (uint8_t *)line,
-                                   (uint16_t)length, 500U);
-            if (tx != HAL_BUSY) {
-                break;
-            }
-            (void)osDelay(5U);
-        }
-        if (tx != HAL_OK) {
-            Error_Handler();
-        }
+        telemetry_send((uint8_t *)line, (uint16_t)length);
     }
 }
 /* USER CODE END 4 */
@@ -645,6 +704,9 @@ void StartDefaultTask(void *argument)
     uint8_t wake = 0x00U;
     uint8_t raw[14];
     uint32_t report_divider = 0U;
+    uint32_t sample_time_ms = 0U;
+    uint32_t fast_divider = 0U;
+    uint16_t fast_sequence = 0U;
     uint32_t previous_tick = 0U;
     uint32_t dt_min = UINT32_MAX;
     uint32_t dt_max = 0U;
@@ -713,8 +775,10 @@ void StartDefaultTask(void *argument)
 
     sample_semaphore = osSemaphoreNew(1U, 0U, NULL);
     report_queue = xQueueCreate(2U, sizeof(ImuReport));
+    fast_queue = xQueueCreate(16U, sizeof(FastReport));
 
-    if (sample_semaphore == NULL || report_queue == NULL) {
+    if (sample_semaphore == NULL || report_queue == NULL ||
+        fast_queue == NULL) {
         Error_Handler();
     }
 
@@ -835,11 +899,15 @@ void StartDefaultTask(void *argument)
         }
 #endif
 
+        const uint32_t read_started_ms = osKernelGetTickCount();
+
         imu_read_status = HAL_I2C_Mem_Read(
             &hi2c1, sample_address, 0x3BU, I2C_MEMADD_SIZE_8BIT,
             raw, sizeof(raw), 20U);
 
         if (imu_read_status == HAL_OK) {
+            sample_time_ms = read_started_ms;
+
             imu_ax = imu_decode_be(raw);
             imu_ay = imu_decode_be(raw + 2);
             imu_az = imu_decode_be(raw + 4);
@@ -938,6 +1006,44 @@ void StartDefaultTask(void *argument)
         gimbal_yaw_tick(
             &htim3, attitude_state.yaw, control_dt);
 
+        if (++fast_divider >= 5U) {
+            fast_divider = 0U;
+
+            if (imu_read_status == HAL_OK) {
+                const uint8_t valid =
+                    gyro_calibration.ready != 0U &&
+                    attitude_state.status == 1U &&
+                    attitude_state.roll >= -180.0F &&
+                    attitude_state.roll <= 180.0F &&
+                    attitude_state.pitch >= -90.0F &&
+                    attitude_state.pitch <= 90.0F &&
+                    attitude_state.yaw >= -180.0F &&
+                    attitude_state.yaw <= 180.0F;
+
+                FastReport fast = {
+                    .sample_ms = sample_time_ms,
+                    .angle_cdeg = {0, 0, 0},
+                    .sequence = fast_sequence++,
+                    .flags = (uint8_t)(
+                        (gyro_calibration.ready ? 1U : 0U) |
+                        (valid ? 2U : 0U))
+                };
+
+                if (valid) {
+                    fast.angle_cdeg[0] =
+                        (int16_t)(attitude_state.roll * 100.0F);
+                    fast.angle_cdeg[1] =
+                        (int16_t)(attitude_state.pitch * 100.0F);
+                    fast.angle_cdeg[2] =
+                        (int16_t)(attitude_state.yaw * 100.0F);
+                }
+
+                if (xQueueSend(fast_queue, &fast, 0U) != pdPASS) {
+                    ++fast_drop_count;
+                }
+            }
+        }
+
         if (++report_divider >= 100U) {
             report_divider = 0U;
             ImuReport report = {
@@ -995,7 +1101,8 @@ void StartDefaultTask(void *argument)
                         + 0.5F)
                     : UINT32_MAX,
                 .filter_status = filter_apply_status,
-                .filter_count = filter_apply_count
+                .filter_count = filter_apply_count,
+                .device_sample_ms = sample_time_ms
             };
 
             if (xQueueSend(report_queue, &report, 0U) != pdPASS) {
