@@ -70,6 +70,10 @@ typedef struct {
     uint32_t filter_status;
     uint32_t filter_count;
     uint32_t device_sample_ms;
+    int32_t pitch_target_mdeg;
+    uint32_t pitch_step_status;
+    uint32_t pitch_target_apply_count;
+    uint32_t pitch_target_apply_ms;
 } ImuReport;
 
 typedef struct {
@@ -573,7 +577,7 @@ static void telemetry_send(uint8_t *data, uint16_t length)
 {
     HAL_StatusTypeDef tx = HAL_BUSY;
     for (unsigned attempt = 0U; attempt < 5U; ++attempt) {
-        tx = HAL_UART_Transmit(&huart2, data, length, 500U);
+        tx = HAL_UART_Transmit(&huart2, data, length, 1000U);
         if (tx != HAL_BUSY) {
             break;
         }
@@ -626,7 +630,7 @@ static void GimbalTelemetryTask(void *argument)
     (void)argument;
     ImuReport report;
     FastReport fast;
-    char line[448];
+    char line[512];
 
     for (;;) {
         if (xQueueReceive(fast_queue, &fast,
@@ -647,7 +651,7 @@ static void GimbalTelemetryTask(void *argument)
             "RPY=%ld,%ld,%ld "
             "P=%lu,%lu,%lu,%ld,%lu,%lu "
             "Y=%lu,%lu,%lu,%ld,%lu,%lu "
-            "K=%lu KS=%lu,%lu\r\n",
+            "K=%lu KS=%lu,%lu PT=%ld PS=%lu,%lu,%lu\r\n",
             (unsigned long)report.count,
             (unsigned long)report.device_sample_ms,
             (unsigned long)report.errors,
@@ -678,7 +682,11 @@ static void GimbalTelemetryTask(void *argument)
             (unsigned long)report.yaw_axis.last_fault,
             (unsigned long)report.correction_gain_milli,
             (unsigned long)report.filter_status,
-            (unsigned long)report.filter_count);
+            (unsigned long)report.filter_count,
+            (long)report.pitch_target_mdeg,
+            (unsigned long)report.pitch_step_status,
+            (unsigned long)report.pitch_target_apply_count,
+            (unsigned long)report.pitch_target_apply_ms);
 
         if (length <= 0 || length >= (int)sizeof(line)) {
             Error_Handler();
@@ -784,7 +792,7 @@ void StartDefaultTask(void *argument)
 
     const osThreadAttr_t telemetry_attributes = {
         .name = "gimbal_telemetry",
-        .stack_size = 1536U,
+        .stack_size = 1792U,
         .priority = osPriorityLow
     };
 
@@ -1102,7 +1110,12 @@ void StartDefaultTask(void *argument)
                     : UINT32_MAX,
                 .filter_status = filter_apply_status,
                 .filter_count = filter_apply_count,
-                .device_sample_ms = sample_time_ms
+                .device_sample_ms = sample_time_ms,
+                .pitch_target_mdeg = pitch_target_mdeg,
+                .pitch_step_status = pitch_step_status,
+                .pitch_target_apply_count =
+                    pitch_target_apply_count,
+                .pitch_target_apply_ms = pitch_target_apply_ms
             };
 
             if (xQueueSend(report_queue, &report, 0U) != pdPASS) {

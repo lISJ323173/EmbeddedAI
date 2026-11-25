@@ -106,7 +106,8 @@ extern "C" void gimbal_servo_test_task(void *argument)
 
         if (command != 'P' && command != 'Y' &&
             command != 'Z' && command != 'C' &&
-            command != 'X' && command != 'H') {
+            command != 'X' && command != 'H' &&
+            command != 'S') {
             continue;
         }
 
@@ -126,7 +127,8 @@ extern "C" void gimbal_servo_test_task(void *argument)
             const bool pitch_blocks_command =
                 pitch_test_state == GIMBAL_AXIS_RUNNING &&
                 (command != 'H' ||
-                 !pitch_closed_loop_enabled);
+                 !pitch_closed_loop_enabled ||
+                 pitch_step_status == 1U);
 
             if (!servo_test_allowed ||
                 pitch_blocks_command ||
@@ -147,7 +149,7 @@ extern "C" void gimbal_servo_test_task(void *argument)
         }
 
         if (command == 'P' || command == 'Z' ||
-            command == 'C') {
+            command == 'C' || command == 'S') {
             const bool yaw_blocks_command =
                 servo_test_state == GIMBAL_AXIS_RUNNING &&
                 (command != 'C' ||
@@ -156,7 +158,8 @@ extern "C" void gimbal_servo_test_task(void *argument)
 
             if (!servo_test_allowed ||
                 pitch_test_state == GIMBAL_AXIS_RUNNING ||
-                yaw_blocks_command) {
+                yaw_blocks_command ||
+                (command == 'S' && !pitch_zero_ready)) {
                 if (command == 'Z') {
                     pitch_zero_status = 2U;
                 } else {

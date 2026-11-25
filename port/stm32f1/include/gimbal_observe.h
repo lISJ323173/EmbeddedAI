@@ -52,6 +52,10 @@ extern volatile uint32_t filter_request_status;
 extern volatile uint32_t filter_apply_status;
 extern volatile uint32_t filter_apply_count;
 
+extern volatile uint32_t pitch_step_status;
+extern volatile uint32_t pitch_target_apply_count;
+extern volatile uint32_t pitch_target_apply_ms;
+
 #ifdef __cplusplus
 }
 #endif

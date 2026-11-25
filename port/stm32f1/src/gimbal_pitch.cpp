@@ -10,6 +10,12 @@ using gimbal::detail::pitch_requests;
 using gimbal::detail::yaw_events;
 using gimbal::detail::pitch_stop_flag;
 
+extern "C" {
+volatile uint32_t pitch_step_status = 0U;
+volatile uint32_t pitch_target_apply_count = 0U;
+volatile uint32_t pitch_target_apply_ms = 0U;
+}
+
 namespace {
 
 constexpr uint32_t pitch_pulses[] = {
@@ -21,12 +27,42 @@ bool pitch_active = false;
 unsigned pitch_index = 0U;
 uint32_t pitch_hold_ticks = 0U;
 float pitch_zero_deg = 0.0F;
-constexpr float pitch_target_deg = 20.0F;
-constexpr float pitch_kp = 2.0F;  // us/deg
+float pitch_target_deg = 20.0F;
+constexpr float pitch_kp = 6.0F;  // us/deg
 constexpr float pitch_ki = 8.0F;  // us/(deg*s)
 constexpr float pitch_deadband_deg = 0.8F;
 
 float pitch_integral_us = 0.0F;
+
+unsigned pitch_step_phase = 0U;
+uint32_t pitch_step_started_ms = 0U;
+
+void apply_pitch_target(float target)
+{
+    pitch_target_deg = target;
+    pitch_target_mdeg = static_cast<int32_t>(
+        std::lround(target * 1000.0F));
+    pitch_target_apply_ms = osKernelGetTickCount();
+    ++pitch_target_apply_count;
+}
+
+void advance_pitch_step()
+{
+    if (pitch_step_status != 1U) return;
+
+    const uint32_t elapsed =
+        osKernelGetTickCount() - pitch_step_started_ms;
+
+    if (pitch_step_phase == 0U && elapsed >= 20000U) {
+        apply_pitch_target(25.0F);
+        pitch_step_phase = 1U;
+    } else if (pitch_step_phase == 1U && elapsed >= 40000U) {
+        apply_pitch_target(20.0F);
+        pitch_step_phase = 2U;
+    } else if (pitch_step_phase == 2U && elapsed >= 60000U) {
+        pitch_step_status = 2U;
+    }
+}
 
 void finish_pitch(
     port::Stm32PwmCh1& pwm,
@@ -41,6 +77,11 @@ void finish_pitch(
         ++pitch_pwm_errors;
         pitch_last_fault = GIMBAL_FAULT_PWM_STOP;
         state = GIMBAL_AXIS_FAULT;
+    }
+
+    if (pitch_step_status == 1U) {
+        pitch_step_status =
+            state == GIMBAL_AXIS_FAULT ? 4U : 3U;
     }
 
     pitch_active = false;
@@ -201,11 +242,18 @@ extern "C" void gimbal_pitch_tick(void *argument,
         return;
     }
 
-    if (!pitch_active && received == osOK) {
-        if (request != 'P' && request != 'C') return;
+    if (pitch_active && received == osOK && request == 'S') {
+        pitch_request_status = 2U;
+    }
 
-        if (request == 'C' && !pitch_zero_ready) {
+    if (!pitch_active && received == osOK) {
+        if (request != 'P' && request != 'C' &&
+            request != 'S') return;
+
+        if ((request == 'C' || request == 'S') &&
+            !pitch_zero_ready) {
             pitch_test_state = GIMBAL_AXIS_REJECTED;
+            pitch_request_status = 2U;
             return;
         }
 
@@ -232,7 +280,11 @@ extern "C" void gimbal_pitch_tick(void *argument,
 
         pitch_last_fault = GIMBAL_FAULT_NONE;
 
-        if (request == 'C') {
+        pitch_step_status = 0U;
+
+        if (request == 'C' || request == 'S') {
+            apply_pitch_target(20.0F);
+
             const float feedback = roll_deg - pitch_zero_deg;
             const float error = pitch_target_deg - feedback;
 
@@ -241,7 +293,9 @@ extern "C" void gimbal_pitch_tick(void *argument,
                     - pitch_kp * error,
                 0.0F, 600.0F);
 
-            pitch_target_mdeg = 20000;
+            pitch_step_phase = 0U;
+            pitch_step_started_ms = pitch_target_apply_ms;
+            pitch_step_status = request == 'S' ? 1U : 0U;
             pitch_closed_loop_enabled = 1U;
         }
 
@@ -260,6 +314,7 @@ extern "C" void gimbal_pitch_tick(void *argument,
             return;
         }
 
+        advance_pitch_step();
         update_pitch_pi(
             pitch, roll_deg - pitch_zero_deg, dt_seconds);
         return;
