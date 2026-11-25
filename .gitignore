@@ -38,3 +38,8 @@ desktop.ini
 /tests/host/build/
 # Local test workspace settings
 /tests/.vscode/
+# ---- Python 上位机 ----
+.venv-gimbal/
+__pycache__/
+*.pyc
+/logs/
