@@ -21,3 +21,11 @@ typedef enum {
     GIMBAL_FAULT_PWM_STOP = 9,
     GIMBAL_FAULT_UNKNOWN = 10
 } GimbalFault;
+
+typedef enum {
+    GIMBAL_PARAM_IDLE = 0,
+    GIMBAL_PARAM_APPLIED = 1,
+    GIMBAL_PARAM_OUT_OF_RANGE = 2,
+    GIMBAL_PARAM_NOT_READY = 3,
+    GIMBAL_PARAM_TRANSPORT_ERROR = 4
+} GimbalParamStatus;

@@ -40,11 +40,16 @@ volatile uint32_t yaw_reference_ready = 0U;
 volatile uint32_t pitch_last_fault = GIMBAL_FAULT_NONE;
 volatile uint32_t yaw_last_fault = GIMBAL_FAULT_NONE;
 
+volatile uint32_t filter_request_status = 0U;
+volatile uint32_t filter_apply_status = GIMBAL_PARAM_IDLE;
+volatile uint32_t filter_apply_count = 0U;
+
 }
 
 namespace gimbal::detail {
 
 osMessageQueueId_t pitch_requests = nullptr;
 osEventFlagsId_t yaw_events = nullptr;
+osMessageQueueId_t filter_requests = nullptr;
 
 }

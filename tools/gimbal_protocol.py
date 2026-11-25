@@ -26,4 +26,18 @@ def parse_line(raw):
         if enabled not in (0, 1) or ready not in (0, 1):
             raise ValueError("invalid axis flags")
         result[key] = values
+    gain = int(fields["K"]) if "K" in fields else None
+    ks = vector("KS", 2) if "KS" in fields else None
+
+    if gain is not None and not 0 <= gain <= 0xffffffff:
+        raise ValueError("invalid K")
+    if ks is not None:
+        if gain is None:
+            raise ValueError("KS without K")
+        if ks[0] not in range(5) or not 0 <= ks[1] <= 0xffffffff:
+            raise ValueError("invalid KS")
+
+    result["gain_milli"] = gain
+    result["ks"] = ks
+
     return result

@@ -7,6 +7,7 @@ import serial
 
 from gimbal_protocol import parse_line
 from gimbal_record import CsvRecorder
+from gimbal_filter_control import FilterControl
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", default="COM10")
@@ -16,7 +17,7 @@ args = parser.parse_args()
 
 try:
     port = serial.Serial(
-        args.port, args.baud, timeout=0,
+        args.port, args.baud, timeout=0, write_timeout=0.2,
         xonxoff=False, rtscts=False, dsrdtr=False)
 except serial.SerialException as exc:
     raise SystemExit(f"Cannot open {args.port}: {exc}")
@@ -30,7 +31,7 @@ except OSError as exc:
 record_error = None
 
 fig, axes = plt.subplots(3, 1, sharex=True, figsize=(10, 7))
-fig.subplots_adjust(top=0.78, hspace=0.25)
+fig.subplots_adjust(top=0.68, hspace=0.25)
 lines = []
 for axis, name in zip(axes, ("Roll", "Pitch", "Yaw")):
     lines.append(axis.plot([], [], label=name)[0])
@@ -38,6 +39,8 @@ for axis, name in zip(axes, ("Roll", "Pitch", "Yaw")):
     axis.grid(True)
 axes[-1].set_xlabel("PC elapsed time (s)")
 status = fig.text(0.02, 0.98, "", va="top", fontsize=9)
+
+filter_control = FilterControl(fig, port)
 
 history = deque(maxlen=300)
 buffer = bytearray()
@@ -76,6 +79,7 @@ def refresh():
                     continue
                 latest = frame
                 last_rx = now
+                filter_control.accept(frame)
                 if recorder is not None and record_error is None:
                     try:
                         recorder.write(frame, raw, now - started)
@@ -133,6 +137,11 @@ def refresh():
             lines[index].set_data(columns[0], columns[index + 1])
             axis.relim()
             axis.autoscale_view()
+    live = (
+        latest is not None and link_error is None
+        and now - last_rx <= 3.0
+        and now - last_progress <= 3.0)
+    filter_control.update(now, live)
     fig.canvas.draw_idle()
 
 timer = fig.canvas.new_timer(interval=100)

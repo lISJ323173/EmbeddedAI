@@ -14,14 +14,31 @@ using gimbal::detail::yaw_start_flag;
 using gimbal::detail::yaw_stop_flag;
 using gimbal::detail::yaw_hold_flag;
 using gimbal::detail::pitch_stop_flag;
+using gimbal::detail::filter_requests;
 
 extern "C" int gimbal_pitch_init(void)
 {
     pitch_requests = osMessageQueueNew(
         1U, sizeof(uint8_t), nullptr);
     yaw_events = osEventFlagsNew(nullptr);
+    filter_requests = osMessageQueueNew(
+        1U, sizeof(uint32_t), nullptr);
 
-    return pitch_requests != nullptr && yaw_events != nullptr;
+    return pitch_requests != nullptr &&
+           yaw_events != nullptr &&
+           filter_requests != nullptr;
+}
+
+extern "C" int gimbal_filter_take_request(uint32_t *gain_milli)
+{
+    if (gain_milli == nullptr) return -1;
+
+    const auto result = osMessageQueueGet(
+        filter_requests, gain_milli, nullptr, 0U);
+
+    if (result == osOK) return 1;
+    if (result == osErrorResource) return 0;
+    return -1;
 }
 
 extern "C" void gimbal_servo_test_task(void *argument)
@@ -49,6 +66,19 @@ extern "C" void gimbal_servo_test_task(void *argument)
             bluetooth_rx_last_error =
                 static_cast<uint32_t>(rx);
             (void)osDelay(5U);
+            continue;
+        }
+
+        if (command >= '1' && command <= '3') {
+            const uint32_t gain_milli =
+                command == '1' ? 500U
+                : command == '2' ? 2000U : 5000U;
+
+            const auto result = osMessageQueuePut(
+                filter_requests, &gain_milli, 0U, 0U);
+
+            filter_request_status = result == osOK ? 1U
+                : result == osErrorResource ? 2U : 3U;
             continue;
         }
 #if GIMBAL_ENABLE_FAULT_INJECTION

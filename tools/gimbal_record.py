@@ -18,6 +18,10 @@ class CsvRecorder:
         columns += [
             f"{axis}_{field}"
             for axis in ("p", "y") for field in axis_fields]
+        columns += [
+            "filter_gain_milli",
+            "filter_apply_status",
+            "filter_apply_count"]
         columns.append("raw_line")
         self.writer.writerow(columns)
         self.file.flush()
@@ -30,6 +34,11 @@ class CsvRecorder:
             frame["att"]]
         row += list(frame["rpy"])
         row += list(frame["P"]) + list(frame["Y"])
+        gain = frame.get("gain_milli")
+        ks = frame.get("ks")
+        row += [
+            "" if gain is None else gain,
+            *(ks if ks is not None else ("", ""))]
         row.append(raw.decode("ascii").strip())
         self.writer.writerow(row)
         self.file.flush()

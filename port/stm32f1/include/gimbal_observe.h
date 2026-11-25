@@ -48,6 +48,10 @@ extern volatile uint32_t bluetooth_rx_last_error;
 extern volatile uint32_t pitch_last_fault;
 extern volatile uint32_t yaw_last_fault;
 
+extern volatile uint32_t filter_request_status;
+extern volatile uint32_t filter_apply_status;
+extern volatile uint32_t filter_apply_count;
+
 #ifdef __cplusplus
 }
 #endif

@@ -30,6 +30,7 @@
 #include "queue.h"
 #include "module/gyro_bias.h"
 #include "module/attitude.h"
+#include "gimbal_control.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -65,6 +66,9 @@ typedef struct {
     int32_t gyro[3];
     AxisReport pitch_axis;
     AxisReport yaw_axis;
+    uint32_t correction_gain_milli;
+    uint32_t filter_status;
+    uint32_t filter_count;
 } ImuReport;
 /* USER CODE END PTD */
 
@@ -558,7 +562,7 @@ static void GimbalTelemetryTask(void *argument)
 {
     (void)argument;
     ImuReport report;
-    char line[384];
+    char line[448];
 
     for (;;) {
         if (xQueueReceive(report_queue, &report,
@@ -573,7 +577,8 @@ static void GimbalTelemetryTask(void *argument)
             "SV=%lu US=%lu CAL=%lu ATT=%lu "
             "RPY=%ld,%ld,%ld "
             "P=%lu,%lu,%lu,%ld,%lu,%lu "
-            "Y=%lu,%lu,%lu,%ld,%lu,%lu\r\n",
+            "Y=%lu,%lu,%lu,%ld,%lu,%lu "
+            "K=%lu KS=%lu,%lu\r\n",
             (unsigned long)report.count,
             (unsigned long)report.errors,
             (unsigned long)report.dt_min,
@@ -600,7 +605,10 @@ static void GimbalTelemetryTask(void *argument)
             (unsigned long)report.yaw_axis.ready,
             (long)report.yaw_axis.feedback_mdeg,
             (unsigned long)report.yaw_axis.pulse_us,
-            (unsigned long)report.yaw_axis.last_fault);
+            (unsigned long)report.yaw_axis.last_fault,
+            (unsigned long)report.correction_gain_milli,
+            (unsigned long)report.filter_status,
+            (unsigned long)report.filter_count);
 
         if (length <= 0 || length >= (int)sizeof(line)) {
             Error_Handler();
@@ -781,8 +789,11 @@ void StartDefaultTask(void *argument)
                 gyro_recalibration_status = 3U;
             } else {
                 gyro_bias_reset(&gyro_calibration);
+                const float preserved_gain =
+                    attitude_state.correction_gain;
+
                 attitude_state =
-                    (Attitude){.correction_gain = 2.0F};
+                    (Attitude){.correction_gain = preserved_gain};
 
                 pitch_zero_ready = 0U;
                 yaw_reference_ready = 0U;
@@ -793,6 +804,26 @@ void StartDefaultTask(void *argument)
                 gyro_mean_mdps[2] = 0;
 
                 gyro_recalibration_status = 4U;
+            }
+        }
+
+        uint32_t requested_gain_milli = 0U;
+        const int parameter_rx =
+            gimbal_filter_take_request(&requested_gain_milli);
+
+        if (parameter_rx < 0) {
+            filter_apply_status = GIMBAL_PARAM_TRANSPORT_ERROR;
+        } else if (parameter_rx > 0) {
+            if (requested_gain_milli > 20000U) {
+                filter_apply_status = GIMBAL_PARAM_OUT_OF_RANGE;
+            } else if (!gyro_calibration.ready ||
+                       attitude_state.status != 1U) {
+                filter_apply_status = GIMBAL_PARAM_NOT_READY;
+            } else {
+                attitude_state.correction_gain =
+                    requested_gain_milli / 1000.0F;
+                ++filter_apply_count;
+                filter_apply_status = GIMBAL_PARAM_APPLIED;
             }
         }
 
@@ -955,7 +986,16 @@ void StartDefaultTask(void *argument)
                     .feedback_mdeg = yaw_feedback_mdeg,
                     .pulse_us = servo_test_pulse,
                     .last_fault = yaw_last_fault
-                }
+                },
+                .correction_gain_milli =
+                    attitude_state.correction_gain >= 0.0F &&
+                    attitude_state.correction_gain <= 20.0F
+                    ? (uint32_t)(
+                        attitude_state.correction_gain * 1000.0F
+                        + 0.5F)
+                    : UINT32_MAX,
+                .filter_status = filter_apply_status,
+                .filter_count = filter_apply_count
             };
 
             if (xQueueSend(report_queue, &report, 0U) != pdPASS) {
