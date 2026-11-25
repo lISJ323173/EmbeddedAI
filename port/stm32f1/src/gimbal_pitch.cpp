@@ -3,6 +3,7 @@
 #include "gimbal_control.h"
 #include "gimbal_observe.h"
 #include "gimbal_transport.hpp"
+#include "module/pitch_map.h"
 #include <algorithm>
 #include <cmath>
 
@@ -33,35 +34,55 @@ constexpr float pitch_ki = 8.0F;  // us/(deg*s)
 constexpr float pitch_deadband_deg = 0.8F;
 
 float pitch_integral_us = 0.0F;
+float pitch_feedforward_delta_us = 0.0F;
 
 unsigned pitch_step_phase = 0U;
 uint32_t pitch_step_started_ms = 0U;
 
-void apply_pitch_target(float target)
+bool apply_pitch_target(float target)
 {
+    uint32_t old_pulse = 0U;
+    uint32_t new_pulse = 0U;
+
+    if (pitch_angle_to_pulse(
+            pitch_target_deg, &old_pulse) != 0U ||
+        pitch_angle_to_pulse(target, &new_pulse) != 0U) {
+        return false;
+    }
+
+    if (pitch_closed_loop_enabled) {
+        pitch_feedforward_delta_us +=
+            static_cast<float>(new_pulse) -
+            static_cast<float>(old_pulse);
+    } else {
+        pitch_feedforward_delta_us = 0.0F;
+    }
+
     pitch_target_deg = target;
     pitch_target_mdeg = static_cast<int32_t>(
         std::lround(target * 1000.0F));
     pitch_target_apply_ms = osKernelGetTickCount();
     ++pitch_target_apply_count;
+    return true;
 }
 
-void advance_pitch_step()
+bool advance_pitch_step()
 {
-    if (pitch_step_status != 1U) return;
+    if (pitch_step_status != 1U) return true;
 
     const uint32_t elapsed =
         osKernelGetTickCount() - pitch_step_started_ms;
 
     if (pitch_step_phase == 0U && elapsed >= 20000U) {
-        apply_pitch_target(25.0F);
+        if (!apply_pitch_target(25.0F)) return false;
         pitch_step_phase = 1U;
     } else if (pitch_step_phase == 1U && elapsed >= 40000U) {
-        apply_pitch_target(20.0F);
+        if (!apply_pitch_target(20.0F)) return false;
         pitch_step_phase = 2U;
     } else if (pitch_step_phase == 2U && elapsed >= 60000U) {
         pitch_step_status = 2U;
     }
+    return true;
 }
 
 void finish_pitch(
@@ -115,6 +136,9 @@ void update_pitch_pi(port::Stm32PwmCh1& pwm,
     const float control_error =
         std::fabs(error) <= pitch_deadband_deg ? 0.0F : error;
 
+    const float base_output =
+        1500.0F + pitch_feedforward_delta_us;
+
     const float proportional = pitch_kp * control_error;
     const float candidate_integral = std::clamp(
         pitch_integral_us +
@@ -122,7 +146,7 @@ void update_pitch_pi(port::Stm32PwmCh1& pwm,
         0.0F, 600.0F);
 
     const float candidate_output =
-        1500.0F + proportional + candidate_integral;
+        base_output + proportional + candidate_integral;
 
     const bool pushing_upper =
         candidate_output > 2100.0F && control_error > 0.0F;
@@ -134,7 +158,7 @@ void update_pitch_pi(port::Stm32PwmCh1& pwm,
     }
 
     const float output = std::clamp(
-        1500.0F + proportional + pitch_integral_us,
+        base_output + proportional + pitch_integral_us,
         1500.0F, 2100.0F);
 
     const uint32_t requested =
@@ -283,7 +307,12 @@ extern "C" void gimbal_pitch_tick(void *argument,
         pitch_step_status = 0U;
 
         if (request == 'C' || request == 'S') {
-            apply_pitch_target(20.0F);
+            if (!apply_pitch_target(20.0F)) {
+                finish_pitch(
+                    pitch, GIMBAL_AXIS_FAULT,
+                    GIMBAL_FAULT_PULSE_RANGE);
+                return;
+            }
 
             const float feedback = roll_deg - pitch_zero_deg;
             const float error = pitch_target_deg - feedback;
@@ -314,7 +343,12 @@ extern "C" void gimbal_pitch_tick(void *argument,
             return;
         }
 
-        advance_pitch_step();
+        if (!advance_pitch_step()) {
+            finish_pitch(
+                pitch, GIMBAL_AXIS_FAULT,
+                GIMBAL_FAULT_PULSE_RANGE);
+            return;
+        }
         update_pitch_pi(
             pitch, roll_deg - pitch_zero_deg, dt_seconds);
         return;

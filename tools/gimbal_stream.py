@@ -38,13 +38,13 @@ class GimbalStream:
                 del self.buffer[:binary]
                 continue
             if newline < 0:
-                if len(self.buffer) > 512:
+                if len(self.buffer) > 768:
                     del self.buffer[0]
                     continue
                 break
             raw = bytes(self.buffer[:newline])
             del self.buffer[:newline + 1]
-            if len(raw) > 512:
+            if len(raw) > 768:
                 continue
             try:
                 line = raw.rstrip(b"\r").decode("ascii")

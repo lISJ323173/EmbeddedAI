@@ -32,6 +32,7 @@
 #include "module/attitude.h"
 #include "gimbal_control.h"
 #include <stdio.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,6 +45,13 @@ typedef struct {
     uint32_t pulse_us;
     uint32_t last_fault;
 } AxisReport;
+
+typedef struct {
+    uint32_t sample_ms;
+    int32_t delta_mdeg;
+    int32_t accel[3];
+    int32_t rate_mdps[3];
+} ImuJumpReport;
 
 typedef struct {
     uint32_t count;
@@ -74,6 +82,7 @@ typedef struct {
     uint32_t pitch_step_status;
     uint32_t pitch_target_apply_count;
     uint32_t pitch_target_apply_ms;
+    ImuJumpReport jump;
 } ImuReport;
 
 typedef struct {
@@ -630,7 +639,7 @@ static void GimbalTelemetryTask(void *argument)
     (void)argument;
     ImuReport report;
     FastReport fast;
-    char line[512];
+    char line[640];
 
     for (;;) {
         if (xQueueReceive(fast_queue, &fast,
@@ -651,7 +660,8 @@ static void GimbalTelemetryTask(void *argument)
             "RPY=%ld,%ld,%ld "
             "P=%lu,%lu,%lu,%ld,%lu,%lu "
             "Y=%lu,%lu,%lu,%ld,%lu,%lu "
-            "K=%lu KS=%lu,%lu PT=%ld PS=%lu,%lu,%lu\r\n",
+            "K=%lu KS=%lu,%lu PT=%ld PS=%lu,%lu,%lu "
+            "J=%lu,%ld,%ld,%ld,%ld,%ld,%ld,%ld\r\n",
             (unsigned long)report.count,
             (unsigned long)report.device_sample_ms,
             (unsigned long)report.errors,
@@ -686,7 +696,15 @@ static void GimbalTelemetryTask(void *argument)
             (long)report.pitch_target_mdeg,
             (unsigned long)report.pitch_step_status,
             (unsigned long)report.pitch_target_apply_count,
-            (unsigned long)report.pitch_target_apply_ms);
+            (unsigned long)report.pitch_target_apply_ms,
+            (unsigned long)report.jump.sample_ms,
+            (long)report.jump.delta_mdeg,
+            (long)report.jump.rate_mdps[0],
+            (long)report.jump.rate_mdps[1],
+            (long)report.jump.rate_mdps[2],
+            (long)report.jump.accel[0],
+            (long)report.jump.accel[1],
+            (long)report.jump.accel[2]);
 
         if (length <= 0 || length >= (int)sizeof(line)) {
             Error_Handler();
@@ -715,6 +733,7 @@ void StartDefaultTask(void *argument)
     uint32_t sample_time_ms = 0U;
     uint32_t fast_divider = 0U;
     uint16_t fast_sequence = 0U;
+    ImuJumpReport jump_report = {0};
     uint32_t previous_tick = 0U;
     uint32_t dt_min = UINT32_MAX;
     uint32_t dt_max = 0U;
@@ -792,7 +811,7 @@ void StartDefaultTask(void *argument)
 
     const osThreadAttr_t telemetry_attributes = {
         .name = "gimbal_telemetry",
-        .stack_size = 1792U,
+        .stack_size = 2048U,
         .priority = osPriorityLow
     };
 
@@ -967,8 +986,36 @@ void StartDefaultTask(void *argument)
                     ++gyro_mean_window_count;
                 }
 
-                attitude_update(&attitude_state, accel_g, gyro_dps,
-                                elapsed_ticks / (float)gimbal_tick_hz);
+                const uint32_t was_valid =
+                    attitude_state.status == 1U;
+                const float previous_roll = attitude_state.roll;
+
+                attitude_update(
+                    &attitude_state, accel_g, gyro_dps,
+                    elapsed_ticks / (float)gimbal_tick_hz);
+
+                if (was_valid && attitude_state.status == 1U) {
+                    float delta =
+                        attitude_state.roll - previous_roll;
+                    if (delta > 180.0F) delta -= 360.0F;
+                    if (delta < -180.0F) delta += 360.0F;
+
+                    const int32_t change_mdeg =
+                        (int32_t)lroundf(delta * 1000.0F);
+
+                    if (fabsf((float)change_mdeg) >
+                        fabsf((float)jump_report.delta_mdeg)) {
+                        jump_report.sample_ms = sample_time_ms;
+                        jump_report.delta_mdeg = change_mdeg;
+
+                        for (unsigned i = 0U; i < 3U; ++i) {
+                            jump_report.accel[i] = accel[i];
+                            jump_report.rate_mdps[i] =
+                                (int32_t)lroundf(
+                                    gyro_dps[i] * 1000.0F);
+                        }
+                    }
+                }
             }
         } else {
             ++imu_error_count;
@@ -1115,12 +1162,15 @@ void StartDefaultTask(void *argument)
                 .pitch_step_status = pitch_step_status,
                 .pitch_target_apply_count =
                     pitch_target_apply_count,
-                .pitch_target_apply_ms = pitch_target_apply_ms
+                .pitch_target_apply_ms = pitch_target_apply_ms,
+                .jump = jump_report
             };
 
             if (xQueueSend(report_queue, &report, 0U) != pdPASS) {
                 ++report_drop_count;
             }
+
+            jump_report = (ImuJumpReport){0};
 
             dt_min = UINT32_MAX;
             dt_max = 0U;
