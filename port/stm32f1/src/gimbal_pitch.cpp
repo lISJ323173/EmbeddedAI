@@ -24,7 +24,7 @@ float pitch_zero_deg = 0.0F;
 constexpr float pitch_target_deg = 20.0F;
 constexpr float pitch_kp = 2.0F;  // us/deg
 constexpr float pitch_ki = 8.0F;  // us/(deg*s)
-constexpr float pitch_deadband_deg = 1.5F;
+constexpr float pitch_deadband_deg = 0.8F;
 
 float pitch_integral_us = 0.0F;
 
