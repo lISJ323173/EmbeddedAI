@@ -314,8 +314,7 @@ extern "C" void gimbal_pitch_tick(void *argument,
     if (received == osOK &&
         (request == '4' || request == '6' || request == '8')) {
         if (!pitch_active || !pitch_closed_loop_enabled ||
-            !pitch_zero_ready || pitch_step_status != 0U ||
-            servo_test_state == GIMBAL_AXIS_RUNNING) {
+            !pitch_zero_ready || pitch_step_status != 0U) {
             pitch_request_status = 2U;
         } else if (!apply_pitch_target(
                        static_cast<float>(request - '0'))) {

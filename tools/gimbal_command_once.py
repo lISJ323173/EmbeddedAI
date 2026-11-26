@@ -5,7 +5,7 @@ import serial
 from gimbal_stream import GimbalStream
 
 parser = argparse.ArgumentParser()
-parser.add_argument("command", choices=list("XPBZCS"))
+parser.add_argument("command", choices=list("XPBZCSYH"))
 parser.add_argument("--port", default="COM10")
 parser.add_argument("--seconds", type=float, default=3.0)
 args = parser.parse_args()

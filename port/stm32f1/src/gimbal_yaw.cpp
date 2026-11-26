@@ -10,15 +10,24 @@ using gimbal::detail::yaw_events;
 using gimbal::detail::yaw_start_flag;
 using gimbal::detail::yaw_stop_flag;
 using gimbal::detail::yaw_hold_flag;
+using gimbal::detail::yaw_target_flags;
+using gimbal::detail::yaw_target_neg_flag;
+using gimbal::detail::yaw_target_zero_flag;
+using gimbal::detail::yaw_target_pos_flag;
 
 namespace {
 
 constexpr float yaw_kp = 4.0F; // us/deg
 constexpr float yaw_ki = 8.0F; // us/(deg*s)
-constexpr float yaw_deadband_deg = 1.5F;
+constexpr float yaw_deadband_deg = 0.5F;
 
 float yaw_reference_deg = 0.0F;
 float yaw_integral_us = 0.0F;
+float yaw_target_deg = 0.0F;
+
+constexpr uint32_t yaw_limit_timeout_ms = 2000U;
+bool yaw_limit_tracking = false;
+uint32_t yaw_limit_started_ms = 0U;
 
 float wrap_yaw(float angle_deg)
 {
@@ -26,9 +35,9 @@ float wrap_yaw(float angle_deg)
 }
 
 constexpr uint32_t yaw_pulses[] = {
-    1500U, 1470U, 1440U, 1500U,
-    1530U, 1560U, 1500U
+    1500U, 1530U, 1500U, 1470U, 1500U
 };
+
 
 bool yaw_active = false;
 unsigned yaw_index = 0U;
@@ -51,6 +60,7 @@ void finish_yaw(
         state = GIMBAL_AXIS_FAULT;
     }
 
+    yaw_limit_tracking = false;
     yaw_active = false;
     yaw_closed_loop_enabled = 0U;
     yaw_reference_pending = false;
@@ -77,7 +87,7 @@ bool write_yaw(port::Stm32PwmCh1& pwm, uint32_t pulse)
 void update_yaw_pi(port::Stm32PwmCh1& pwm,
                    float feedback_deg, float dt_seconds)
 {
-    const float error = -feedback_deg;
+    const float error = yaw_target_deg - feedback_deg;
     yaw_error_mdeg = static_cast<int32_t>(
         std::lround(error * 1000.0F));
 
@@ -86,6 +96,25 @@ void update_yaw_pi(port::Stm32PwmCh1& pwm,
 
     if (control_error != 0.0F) {
         ++yaw_outside_deadband_samples;
+    }
+
+    const bool pushing_limit =
+        (servo_test_pulse >= 1560U && control_error > 0.0F) ||
+        (servo_test_pulse <= 1440U && control_error < 0.0F);
+
+    const uint32_t now_ms = osKernelGetTickCount();
+
+    if (!pushing_limit) {
+        yaw_limit_tracking = false;
+    } else if (!yaw_limit_tracking) {
+        yaw_limit_tracking = true;
+        yaw_limit_started_ms = now_ms;
+    } else if ((uint32_t)(now_ms - yaw_limit_started_ms) >=
+               yaw_limit_timeout_ms) {
+        finish_yaw(
+            pwm, GIMBAL_AXIS_FAULT,
+            GIMBAL_FAULT_TRACKING_TIMEOUT);
+        return;
     }
 
     const float proportional = yaw_kp * control_error;
@@ -134,7 +163,8 @@ extern "C" void gimbal_yaw_tick(void *argument,
 
     uint32_t events = osEventFlagsWait(
         yaw_events,
-        yaw_start_flag | yaw_stop_flag | yaw_hold_flag,
+        yaw_start_flag | yaw_stop_flag | yaw_hold_flag |
+            yaw_target_flags,
         osFlagsWaitAny, 0U);
 
     if ((events & osFlagsError) != 0U) {
@@ -181,6 +211,29 @@ extern "C" void gimbal_yaw_tick(void *argument,
         return;
     }
 
+    const uint32_t target_flags = events & yaw_target_flags;
+
+    if (target_flags != 0U) {
+        if (!yaw_active || !yaw_closed_loop_enabled) {
+            yaw_request_status = 2U;
+        } else {
+            float target = 0.0F;
+
+            if ((target_flags & yaw_target_neg_flag) != 0U) {
+                target = -2.0F;
+            } else if ((target_flags & yaw_target_pos_flag) != 0U) {
+                target = 2.0F;
+            }
+
+            yaw_target_deg = target;
+            yaw_target_mdeg = static_cast<int32_t>(
+                std::lround(target * 1000.0F));
+            yaw_target_apply_ms = osKernelGetTickCount();
+            ++yaw_target_apply_count;
+            yaw_request_status = 1U;
+        }
+    }
+
     if (!yaw_active && start_requested) {
         const bool pitch_blocks_start =
             pitch_test_state == GIMBAL_AXIS_RUNNING &&
@@ -209,6 +262,8 @@ extern "C" void gimbal_yaw_tick(void *argument,
         yaw_reference_pending = hold_requested;
         yaw_reference_wait_ticks = 0U;
         yaw_reference_ready = 0U;
+        yaw_target_deg = 0.0F;
+        yaw_target_mdeg = 0;
 
         yaw_active = true;
         servo_test_state = GIMBAL_AXIS_RUNNING;
@@ -272,7 +327,7 @@ extern "C" void gimbal_yaw_tick(void *argument,
         return;
     }
 
-    if (++yaw_hold_ticks >= 500U) {
+    if (++yaw_hold_ticks >= 200U) {
         yaw_hold_ticks = 0U;
         ++yaw_index;
 

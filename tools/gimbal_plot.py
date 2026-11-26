@@ -45,7 +45,7 @@ fast_record_error = None
 record_error = None
 
 fig, axes = plt.subplots(3, 1, sharex=True, figsize=(10, 8))
-fig.subplots_adjust(top=0.54, hspace=0.25)
+fig.subplots_adjust(top=0.50, hspace=0.25)
 lines = []
 for axis, name in zip(axes, ("Roll", "Pitch", "Yaw")):
     lines.append(axis.plot([], [], label=name)[0])
@@ -55,7 +55,10 @@ axes[-1].set_xlabel("Device elapsed time (s)")
 status = fig.text(0.02, 0.98, "", va="top", fontsize=9)
 
 filter_control = FilterControl(fig, port)
-target_control = TargetControl(fig, port)
+p_target_control = TargetControl(fig, port, "P", 0.645, 0.695, with_stop=True)
+y_target_control = TargetControl(fig, port, "Y", 0.555, 0.605)
+p_target_control.peers.append(y_target_control)
+y_target_control.peers.append(p_target_control)
 
 stream = GimbalStream()
 fast_view = FastView()
@@ -66,6 +69,7 @@ last_n = None
 latest = None
 ignored = 0
 link_error = None
+target_error = None
 
 
 def axis_text(name, values):
@@ -76,7 +80,7 @@ def axis_text(name, values):
 
 def refresh():
     global latest, last_rx, last_progress, last_n
-    global ignored, link_error
+    global ignored, link_error, target_error
     global record_error
     global fast_record_error
     now = time.monotonic()
@@ -109,7 +113,14 @@ def refresh():
                 latest = frame
                 last_rx = now
                 filter_control.accept(frame)
-                target_control.accept(frame)
+                if target_error is None:
+                    try:
+                        p_target_control.accept(frame)
+                        y_target_control.accept(frame)
+                    except Exception as exc:
+                        target_error = f"{type(exc).__name__}: {exc}"
+                        print(f"Target control failed: {exc}",
+                              flush=True)
 
                 if recorder is not None and record_error is None:
                     try:
@@ -160,6 +171,10 @@ def refresh():
     elif recorder is not None:
         message += "\nREC ON"
 
+    if target_error is not None:
+        message += f"\nTARGET ERROR: {target_error}"
+        color = "red"
+
     if fast_record_error is not None:
         message += f"\nFAST REC ERROR: {fast_record_error}"
         color = "red"
@@ -182,7 +197,19 @@ def refresh():
         and fast_view.last_progress is not None
         and now - fast_view.last_progress <= 3.0)
     filter_control.update(now, live)
-    target_control.update(now, live)
+    if target_error is None:
+        try:
+            p_target_control.update(now, live)
+            y_target_control.update(now, live)
+        except Exception as exc:
+            target_error = f"{type(exc).__name__}: {exc}"
+            print(f"Target control failed: {exc}", flush=True)
+    if target_error is not None:
+        for control in (p_target_control, y_target_control):
+            control.live = False
+            for button in control.buttons:
+                button.set_active(False)
+
     fig.canvas.draw_idle()
 
 timer = fig.canvas.new_timer(interval=100)

@@ -82,6 +82,9 @@ typedef struct {
     uint32_t pitch_step_status;
     uint32_t pitch_target_apply_count;
     uint32_t pitch_target_apply_ms;
+    int32_t yaw_target_mdeg;
+    uint32_t yaw_target_apply_count;
+    uint32_t yaw_target_apply_ms;
     ImuJumpReport jump;
 } ImuReport;
 
@@ -661,7 +664,8 @@ static void GimbalTelemetryTask(void *argument)
             "P=%lu,%lu,%lu,%ld,%lu,%lu "
             "Y=%lu,%lu,%lu,%ld,%lu,%lu "
             "K=%lu KS=%lu,%lu PT=%ld PS=%lu,%lu,%lu "
-            "J=%lu,%ld,%ld,%ld,%ld,%ld,%ld,%ld\r\n",
+            "J=%lu,%ld,%ld,%ld,%ld,%ld,%ld,%ld "
+            "YT=%ld YA=%lu\r\n",
             (unsigned long)report.count,
             (unsigned long)report.device_sample_ms,
             (unsigned long)report.errors,
@@ -704,7 +708,9 @@ static void GimbalTelemetryTask(void *argument)
             (long)report.jump.rate_mdps[2],
             (long)report.jump.accel[0],
             (long)report.jump.accel[1],
-            (long)report.jump.accel[2]);
+            (long)report.jump.accel[2],
+            (long)report.yaw_target_mdeg,
+            (unsigned long)report.yaw_target_apply_count);
 
         if (length <= 0 || length >= (int)sizeof(line)) {
             Error_Handler();
@@ -1163,6 +1169,9 @@ void StartDefaultTask(void *argument)
                 .pitch_target_apply_count =
                     pitch_target_apply_count,
                 .pitch_target_apply_ms = pitch_target_apply_ms,
+                .yaw_target_mdeg = yaw_target_mdeg,
+                .yaw_target_apply_count = yaw_target_apply_count,
+                .yaw_target_apply_ms = yaw_target_apply_ms,
                 .jump = jump_report
             };
 

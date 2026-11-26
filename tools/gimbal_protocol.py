@@ -61,4 +61,17 @@ def parse_line(raw):
     result["pitch_target_mdeg"] = target
     result["pitch_step"] = step
 
+    ytarget = int(fields["YT"]) if "YT" in fields else None
+    yack = int(fields["YA"]) if "YA" in fields else None
+
+    if (ytarget is None) != (yack is None):
+        raise ValueError("incomplete YT/YA")
+    if ytarget is not None and not -0x80000000 <= ytarget <= 0x7fffffff:
+        raise ValueError("invalid YT")
+    if yack is not None and not 0 <= yack <= 0xffffffff:
+        raise ValueError("invalid YA")
+
+    result["yaw_target_mdeg"] = ytarget
+    result["yaw_target_ack"] = yack
+
     return result

@@ -10,6 +10,9 @@ extern UART_HandleTypeDef huart2;
 
 using gimbal::detail::pitch_requests;
 using gimbal::detail::yaw_events;
+using gimbal::detail::yaw_target_neg_flag;
+using gimbal::detail::yaw_target_zero_flag;
+using gimbal::detail::yaw_target_pos_flag;
 using gimbal::detail::yaw_start_flag;
 using gimbal::detail::yaw_stop_flag;
 using gimbal::detail::yaw_hold_flag;
@@ -108,7 +111,9 @@ extern "C" void gimbal_servo_test_task(void *argument)
             command != 'Z' && command != 'C' &&
             command != 'X' && command != 'H' &&
             command != 'S' && command != '4' &&
-            command != '6' && command != '8') {
+            command != '6' && command != '8' &&
+            command != 'a' && command != 'b' &&
+            command != 'c') {
             continue;
         }
 
@@ -186,8 +191,7 @@ extern "C" void gimbal_servo_test_task(void *argument)
             if (!servo_test_allowed || !pitch_zero_ready ||
                 pitch_test_state != GIMBAL_AXIS_RUNNING ||
                 !pitch_closed_loop_enabled ||
-                pitch_step_status != 0U ||
-                servo_test_state == GIMBAL_AXIS_RUNNING) {
+                pitch_step_status != 0U) {
                 pitch_request_status = 2U;
                 continue;
             }
@@ -197,6 +201,26 @@ extern "C" void gimbal_servo_test_task(void *argument)
 
             pitch_request_status = sent == osOK ? 1U
                 : sent == osErrorResource ? 2U : 3U;
+            continue;
+        }
+
+        if (command == 'a' || command == 'b' || command == 'c') {
+            if (!servo_test_allowed ||
+                servo_test_state != GIMBAL_AXIS_RUNNING ||
+                !yaw_closed_loop_enabled || !yaw_reference_ready) {
+                yaw_request_status = 2U;
+                continue;
+            }
+
+            const uint32_t flag =
+                command == 'a' ? yaw_target_neg_flag
+                : command == 'c' ? yaw_target_pos_flag
+                : yaw_target_zero_flag;
+
+            const uint32_t flags = osEventFlagsSet(yaw_events, flag);
+
+            yaw_request_status =
+                (flags & osFlagsError) != 0U ? 3U : 1U;
             continue;
         }
     }
