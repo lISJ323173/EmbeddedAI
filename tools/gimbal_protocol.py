@@ -45,4 +45,20 @@ def parse_line(raw):
         raise ValueError("invalid T")
     result["device_sample_ms"] = sample_ms
 
+    target = int(fields["PT"]) if "PT" in fields else None
+    step = vector("PS", 3) if "PS" in fields else None
+
+    if (target is None) != (step is None):
+        raise ValueError("incomplete PT/PS")
+    if target is not None and not -0x80000000 <= target <= 0x7fffffff:
+        raise ValueError("invalid PT")
+    if step is not None:
+        if step[0] not in range(5):
+            raise ValueError("invalid PS state")
+        if not all(0 <= value <= 0xffffffff for value in step[1:]):
+            raise ValueError("invalid PS counter/time")
+
+    result["pitch_target_mdeg"] = target
+    result["pitch_step"] = step
+
     return result

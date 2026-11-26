@@ -107,7 +107,8 @@ extern "C" void gimbal_servo_test_task(void *argument)
         if (command != 'P' && command != 'Y' &&
             command != 'Z' && command != 'C' &&
             command != 'X' && command != 'H' &&
-            command != 'S') {
+            command != 'S' && command != '4' &&
+            command != '6' && command != '8') {
             continue;
         }
 
@@ -178,6 +179,24 @@ extern "C" void gimbal_servo_test_task(void *argument)
                 pitch_request_status = sent == osOK ? 1U
                     : sent == osErrorResource ? 2U : 3U;
             }
+            continue;
+        }
+
+        if (command == '4' || command == '6' || command == '8') {
+            if (!servo_test_allowed || !pitch_zero_ready ||
+                pitch_test_state != GIMBAL_AXIS_RUNNING ||
+                !pitch_closed_loop_enabled ||
+                pitch_step_status != 0U ||
+                servo_test_state == GIMBAL_AXIS_RUNNING) {
+                pitch_request_status = 2U;
+                continue;
+            }
+
+            const auto sent = osMessageQueuePut(
+                pitch_requests, &command, 0U, 0U);
+
+            pitch_request_status = sent == osOK ? 1U
+                : sent == osErrorResource ? 2U : 3U;
             continue;
         }
     }

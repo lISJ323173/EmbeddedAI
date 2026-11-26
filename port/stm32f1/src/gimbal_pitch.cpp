@@ -61,16 +61,18 @@ uint32_t pitch_step_started_ms = 0U;
 
 bool apply_pitch_target(float target)
 {
-    uint32_t old_pulse = 0U;
-    uint32_t new_pulse = 0U;
-
-    if (pitch_angle_to_pulse(
-            pitch_target_deg, &old_pulse) != 0U ||
-        pitch_angle_to_pulse(target, &new_pulse) != 0U) {
+    if (!std::isfinite(target) || target < 4.0F || target > 8.0F) {
         return false;
     }
 
     if (pitch_feedforward_enabled && pitch_closed_loop_enabled) {
+        uint32_t old_pulse = 0U;
+        uint32_t new_pulse = 0U;
+        if (pitch_angle_to_pulse(pitch_target_deg, &old_pulse) != 0U ||
+            pitch_angle_to_pulse(target, &new_pulse) != 0U) {
+            return false;
+        }
+
         pitch_feedforward_delta_us +=
             static_cast<float>(new_pulse) -
             static_cast<float>(old_pulse);
@@ -307,6 +309,22 @@ extern "C" void gimbal_pitch_tick(void *argument,
             pitch_test_state = GIMBAL_AXIS_REJECTED;
         }
         return;
+    }
+
+    if (received == osOK &&
+        (request == '4' || request == '6' || request == '8')) {
+        if (!pitch_active || !pitch_closed_loop_enabled ||
+            !pitch_zero_ready || pitch_step_status != 0U ||
+            servo_test_state == GIMBAL_AXIS_RUNNING) {
+            pitch_request_status = 2U;
+        } else if (!apply_pitch_target(
+                       static_cast<float>(request - '0'))) {
+            finish_pitch(
+                pitch, GIMBAL_AXIS_FAULT, GIMBAL_FAULT_PULSE_RANGE);
+            return;
+        } else {
+            pitch_request_status = 1U;
+        }
     }
 
     if (pitch_active && received == osOK && request == 'S') {

@@ -7,6 +7,7 @@ import serial
 from gimbal_protocol import parse_line
 from gimbal_record import CsvRecorder
 from gimbal_filter_control import FilterControl
+from gimbal_target_control import TargetControl
 from gimbal_stream import GimbalStream
 from gimbal_fast_view import FastView
 from gimbal_fast_record import FastCsvRecorder
@@ -43,8 +44,8 @@ fast_record_error = None
 
 record_error = None
 
-fig, axes = plt.subplots(3, 1, sharex=True, figsize=(10, 7))
-fig.subplots_adjust(top=0.68, hspace=0.25)
+fig, axes = plt.subplots(3, 1, sharex=True, figsize=(10, 8))
+fig.subplots_adjust(top=0.54, hspace=0.25)
 lines = []
 for axis, name in zip(axes, ("Roll", "Pitch", "Yaw")):
     lines.append(axis.plot([], [], label=name)[0])
@@ -54,6 +55,7 @@ axes[-1].set_xlabel("Device elapsed time (s)")
 status = fig.text(0.02, 0.98, "", va="top", fontsize=9)
 
 filter_control = FilterControl(fig, port)
+target_control = TargetControl(fig, port)
 
 stream = GimbalStream()
 fast_view = FastView()
@@ -107,6 +109,7 @@ def refresh():
                 latest = frame
                 last_rx = now
                 filter_control.accept(frame)
+                target_control.accept(frame)
 
                 if recorder is not None and record_error is None:
                     try:
@@ -179,6 +182,7 @@ def refresh():
         and fast_view.last_progress is not None
         and now - fast_view.last_progress <= 3.0)
     filter_control.update(now, live)
+    target_control.update(now, live)
     fig.canvas.draw_idle()
 
 timer = fig.canvas.new_timer(interval=100)
