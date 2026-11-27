@@ -43,3 +43,6 @@ desktop.ini
 __pycache__/
 *.pyc
 /logs/
+
+# Python 本地虚拟环境
+/.venv/
