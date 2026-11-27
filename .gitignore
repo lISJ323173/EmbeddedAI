@@ -46,3 +46,6 @@ __pycache__/
 
 # Python 本地虚拟环境
 /.venv/
+
+# 公开数据集原始/转换产物（体积大，不进版本库）
+data/external/

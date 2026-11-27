@@ -1,6 +1,9 @@
 from pathlib import Path
 from statistics import median
+import sys
 
+expected = float(sys.argv[1]) if len(sys.argv) > 1 else 20.0
+period_ms = 1000.0 / expected
 root = Path(__file__).resolve().parents[1]
 path = root / "p1_timing.txt"
 times = []
@@ -28,6 +31,6 @@ if min(gaps) <= 0:
 rate = 1000.0 * len(gaps) / (times[-1] - times[0])
 print(f"TIMING samples={len(times)} rate={rate:.2f} Hz "
       f"min={min(gaps)} ms median={median(gaps):g} ms max={max(gaps)} ms")
-if not 19.0 <= rate <= 21.0 or max(gaps) > 75:
-    raise SystemExit("FAIL: rate or maximum gap outside pilot limits")
-print("PASS: 20 Hz pilot timing")
+if not 0.95 * expected <= rate <= 1.05 * expected or max(gaps) > 4 * period_ms:
+    raise SystemExit(f"FAIL: rate or maximum gap outside {expected:g} Hz pilot limits")
+print(f"PASS: {expected:g} Hz pilot timing")

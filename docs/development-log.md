@@ -37,7 +37,7 @@ MPU6050 ──I²C(100 kHz)──► STM32F407 ──USART1(115200)──► PC
 
 | 设计项 | 取值 | 依据 |
 |---|---|---|
-| 采样率 | 100 Hz | 走路步频约 2 Hz、跑步约 3 Hz，100 Hz 留 30 倍余量 |
+| 采样率 | 50 Hz | 与所选公开数据集一致；步频 2–3 Hz，50 Hz 足够且带宽占用小 |
 | 窗口 | 2 s，50% 重叠 | 2 s 可容纳 2–4 个步态周期，重叠避免边界丢样本 |
 | 输入维度 | 6 轴 × 统计特征（均值 / 标准差 / 最大 / 最小 / 过零率等） | 特征法比原始波形简单一个数量级，先跑通再考虑 1D-CNN |
 | 量化 | int8，对称量化 | Cortex-M4F 无 FPU 加速的整型算子，CMSIS-NN 原生支持 |
@@ -144,15 +144,51 @@ TIMING samples=325 rate=20.02 Hz min=49 ms median=50 ms max=50 ms
 PASS: 20 Hz pilot timing
 ```
 
-## 5. 实测数据汇总
-| 项目 | 实测值 | 备注 |
+### 4.6 公开数据集接入（MotionSense）
+
+走、跑两类若自行采集，需要可穿戴的无线链路；为尽快跑通训练与部署，采用公开数据集
+[MotionSense](https://github.com/nicocavalcanti/motion-sense)（IoTDI'19）：
+
+| 项 | 值 |
+|---|---|
+| 设备与位置 | iPhone 6s，裤前口袋 |
+| 采样率 | 50 Hz |
+| 受试者 | 24 人 |
+| 动作 | `wlk` 走路、`jog` 慢跑、`std`/`sit` 静止 |
+| 类别映射 | walk = wlk，run = jog，still = std + sit |
+
+原始数据为 Core Motion 的合并输出（gravity + userAcceleration + rotationRate），
+转换时按 `accel = gravity + userAcceleration`（单位 g）、`gyro = rotationRate`（单位 rad/s）
+还原，再换算到板端整数域（±2g → 16384 LSB/g，±250 dps → 131 LSB/(°/s)）：
+
+```text
+run    rows= 134231 files= 48 subjects=24  (2684.6 s)
+still  rows= 645205 files= 96 subjects=24  (12904.1 s)
+walk   rows= 344288 files= 72 subjects=24  (6885.8 s)
+TOTAL  rows=1123724 files=216
+```
+
+换算后自检：静置合加速度 1.00 g，走路均值 1.22 g、跑步 1.71 g，陀螺 RMS 分别为
+250 / 19796 / 27846 LSB，量级合理。
+
+固件相应改为 **50 Hz**（周期 20 ms）：
+
+```text
+TIMING samples=830 rate=51.34 Hz min=19 ms median=19 ms max=20 ms
+PASS: 50 Hz pilot timing
+```
+
+> 域差异说明：数据集为裤袋中的手机，板端为手腕模块。板上实时演示时需把模块置于裤袋
+> 以复现同一域；若仍戴手腕，应视为跨域测试并在文档中注明。
+
+## 5. 实测数据汇总| 项目 | 实测值 | 备注 |
 |---|---|---|
 | WHO_AM_I | `0x68` | 冷上电，地址 0x68 |
 | 静置 `az`（正面朝上） | +17130 | 比理论 16384 高约 4.5% |
 | 翻转后 `az`（正面朝下） | −15890 | 符号反转 |
 | 静置合加速度 | 约 0.98–1.05 g | 与放置姿态有关 |
 | 陀螺零偏（静置） | gx 约 +1880（≈14 °/s） | 需后续做零偏标定 |
-| 当前采样率 | 20.02 Hz（间隔 49/50/50 ms，325 样本 / 16 s） | 修复优先级饥饿后达标 |
+| 当前采样率 | **51.34 Hz**（间隔 19/19/20 ms，830 样本 / 16 s） | 改为 50 Hz 后达标 |
 | FLASH 占用 | 68088 B / 1 MB（6.49%） | 含诊断与送样代码 |
 | RAM 占用 | 21544 B / 128 KB（16.44%） | 静态占用 |
 

@@ -205,30 +205,30 @@ static void servo_health_task(void*)
 }
 
 /* 20 Hz 送样：一行 6 个原始值，串口助手直接可读。 */
-/* 20 Hz 送样（保持原调度，仅加时间戳）：首列是 HAL_GetTick() 毫秒时间。 */
+/* 50 Hz 送样（与 MotionSense 数据集一致）：首列是 HAL_GetTick() 毫秒时间。 */
 static void imu_telemetry_task(void*)
 {
-    std::printf("\r\nIMU,t_ms,ax,ay,az,gx,gy,gz @20Hz\r\n");
+    std::printf("\r\nIMU,t_ms,ax,ay,az,gx,gy,gz @50Hz\r\n");
     device::Mpu6050RawSample sample{};
     unsigned error_streak = 0U;
 
     for (;;) {
         const std::uint32_t sampled_at = HAL_GetTick();
-        auto status = imu.read_raw(sample, 50U);
+        auto status = imu.read_raw(sample, 20U);
 
         if (status != bsp::Error::Ok) {
-            /* 每 1 s 重试一次初始化：传感器晚接上也能自愈。 */
+            /* 每 400 ms 重试一次初始化：传感器晚接上也能自愈。 */
             const bool retry_now = ((error_streak % 20U) == 0U);
             if (retry_now) {
-                (void)imu.wake_up(50U);
-                status = imu.read_raw(sample, 50U);
+                (void)imu.wake_up(20U);
+                status = imu.read_raw(sample, 20U);
             }
             if (status != bsp::Error::Ok) {
                 if (retry_now) {
                     std::printf("IMU,ERR,%d\r\n", static_cast<int>(status));
                 }
                 ++error_streak;
-                osDelay(50U);
+                osDelay(20U);
                 continue;
             }
         }
@@ -243,8 +243,8 @@ static void imu_telemetry_task(void*)
                     static_cast<int>(sample.gyro_y),
                     static_cast<int>(sample.gyro_z));
 
-        /* 补偿式延时：扣除本次读写耗时，把周期钉在 50 ms。 */
-        constexpr std::uint32_t period_ms = 50U;
+        /* 补偿式延时：扣除本次读写耗时，把周期钉在 20 ms（50 Hz）。 */
+        constexpr std::uint32_t period_ms = 20U;
         const std::uint32_t spent = HAL_GetTick() - sampled_at;
         osDelay(spent < period_ms ? (period_ms - spent) : 0U);
     }
