@@ -12,10 +12,14 @@ def load_samples(name):
         if not line.startswith("IMU,") or line.startswith("IMU,ax,"):
             continue
         fields = line.split(",")
-        if len(fields) != 7:
+        values = fields[1:]
+        # 兼容两种格式：IMU,ax..gz（7 列）与 IMU,t_ms,ax..gz（8 列）
+        if len(values) == 8:
+            values = values[1:]
+        if len(values) != 7:
             raise SystemExit(f"{name}: invalid IMU row: {line}")
         try:
-            samples.append(tuple(int(value) for value in fields[1:]))
+            samples.append(tuple(int(value) for value in values))
         except ValueError:
             raise SystemExit(f"{name}: non-integer IMU value: {line}")
     if len(samples) < 20:
