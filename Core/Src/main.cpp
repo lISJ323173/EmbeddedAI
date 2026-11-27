@@ -31,6 +31,7 @@
 #include "application/servo_tasks.hpp"
 #include "device/mpu6050.hpp"
 #include "cmsis_os2.h"
+#include <cstdio>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -77,6 +78,9 @@ static bsp::Error i2c_bad_address_result = bsp::Error::HardwareFailure;
 
 static std::uint8_t imu_probe_id = 0xFF;
 static bsp::Error imu_probe_result = bsp::Error::HardwareFailure;
+
+/* 文件作用域：送样任务和调试器都能直接看到这个实例。 */
+static device::Mpu6050 imu(i2c1_port, 0x68U);
 
 /* Kept at file scope so the debugger can resolve them at the RX check. */
 static bsp::CanFrame can_rx_frame{};
@@ -187,6 +191,29 @@ static void servo_health_task(void*)
     }
 }
 
+/* 20 Hz 送样：一行 6 个原始值，串口助手直接可读。 */
+static void imu_telemetry_task(void*)
+{
+    std::printf("\r\nIMU,ax,ay,az,gx,gy,gz @20Hz\r\n");
+    device::Mpu6050RawSample sample{};
+
+    for (;;) {
+        const auto status = imu.read_raw(sample, 50U);
+        if (status == bsp::Error::Ok) {
+            std::printf("IMU,%d,%d,%d,%d,%d,%d\r\n",
+                        static_cast<int>(sample.accel_x),
+                        static_cast<int>(sample.accel_y),
+                        static_cast<int>(sample.accel_z),
+                        static_cast<int>(sample.gyro_x),
+                        static_cast<int>(sample.gyro_y),
+                        static_cast<int>(sample.gyro_z));
+        } else {
+            std::printf("IMU,ERR,%d\r\n", static_cast<int>(status));
+        }
+        osDelay(50U);
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -293,20 +320,25 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
       ++i2c_it_pass_count;
   }
 
-  device::Mpu6050 imu(i2c1, 0x68U);
   imu_probe_result = imu.probe(imu_probe_id, 100U);
 
-  // 当前模块的设备层验收：读到已知的身份不匹配值。
-  if (imu_probe_result != bsp::Error::Unsupported ||
-      imu_probe_id != 0x74U) {
+  // 总线读失败才算故障；WHO_AM_I 不是 0x68 只提示（兼容芯片常见 0x70/0x74）。
+  if (imu_probe_result != bsp::Error::Ok &&
+      imu_probe_result != bsp::Error::Unsupported) {
       Error_Handler();
   }
 
-  if (imu_probe_result == bsp::Error::Unsupported &&
-      log.write(bsp::LogLevel::Warning, "IMU identity unsupported")
-          != bsp::Error::Ok) {
-      Error_Handler();
+  {
+      char probe_message[48]{};
+      (void)std::snprintf(probe_message, sizeof(probe_message),
+                          "IMU WHO_AM_I=0x%02X", static_cast<unsigned>(imu_probe_id));
+      if (log.write(bsp::LogLevel::Info, probe_message) != bsp::Error::Ok) {
+          Error_Handler();
+      }
   }
+
+  // 唤醒失败不阻断启动：送样任务会打印 IMU,ERR 方便定位。
+  (void)imu.wake_up(100U);
 
   MX_CAN1_Init();
 
@@ -438,6 +470,15 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
   health_attributes.stack_size = 1024U;
 
   if (osThreadNew(servo_health_task, nullptr, &health_attributes) == nullptr) {
+      Error_Handler();
+  }
+
+  osThreadAttr_t imu_attributes{};
+  imu_attributes.name = "imu";
+  imu_attributes.priority = osPriorityLow;
+  imu_attributes.stack_size = 2048U;
+
+  if (osThreadNew(imu_telemetry_task, nullptr, &imu_attributes) == nullptr) {
       Error_Handler();
   }
 
