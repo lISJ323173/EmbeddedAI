@@ -17,7 +17,7 @@ TRIALS = {"wlk": (7, 8, 15), "jog": (9, 16), "std": (6, 14), "sit": (5, 13)}
 LABEL = {"wlk": "walk", "jog": "run", "std": "still", "sit": "still"}
 PERIOD_MS = 20  # 50 Hz
 
-ACC_LSB_PER_G = 4096.0
+ACC_LSB_PER_G = 4310.0  # 实测：正面朝上静置 1 g = 4310 LSB（±8 g 档）
 GYRO_LSB_PER_RAD = 32.8 * 180.0 / math.pi
 
 
