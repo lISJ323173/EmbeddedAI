@@ -209,20 +209,36 @@ static void imu_telemetry_task(void*)
 {
     std::printf("\r\nIMU,ax,ay,az,gx,gy,gz @20Hz\r\n");
     device::Mpu6050RawSample sample{};
+    unsigned error_streak = 0U;
 
     for (;;) {
-        const auto status = imu.read_raw(sample, 50U);
-        if (status == bsp::Error::Ok) {
-            std::printf("IMU,%d,%d,%d,%d,%d,%d\r\n",
-                        static_cast<int>(sample.accel_x),
-                        static_cast<int>(sample.accel_y),
-                        static_cast<int>(sample.accel_z),
-                        static_cast<int>(sample.gyro_x),
-                        static_cast<int>(sample.gyro_y),
-                        static_cast<int>(sample.gyro_z));
-        } else {
-            std::printf("IMU,ERR,%d\r\n", static_cast<int>(status));
+        auto status = imu.read_raw(sample, 50U);
+
+        if (status != bsp::Error::Ok) {
+            /* 每 1 s 重试一次初始化：传感器晚接上也能自愈。 */
+            const bool retry_now = ((error_streak % 20U) == 0U);
+            if (retry_now) {
+                (void)imu.wake_up(50U);
+                status = imu.read_raw(sample, 50U);
+            }
+            if (status != bsp::Error::Ok) {
+                if (retry_now) {
+                    std::printf("IMU,ERR,%d\r\n", static_cast<int>(status));
+                }
+                ++error_streak;
+                osDelay(50U);
+                continue;
+            }
         }
+
+        error_streak = 0U;
+        std::printf("IMU,%d,%d,%d,%d,%d,%d\r\n",
+                    static_cast<int>(sample.accel_x),
+                    static_cast<int>(sample.accel_y),
+                    static_cast<int>(sample.accel_z),
+                    static_cast<int>(sample.gyro_x),
+                    static_cast<int>(sample.gyro_y),
+                    static_cast<int>(sample.gyro_z));
         osDelay(50U);
     }
 }
@@ -285,10 +301,15 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
   bsp::II2c& i2c1 = i2c1_port;
 
   i2c_read_result = i2c1.read_register(0x68, 0x75, &mpu_who_am_i, 1, 100U);
-  if (i2c_read_result != bsp::Error::Ok) {
-      Error_Handler();
+
+  /* 没有传感器时不停机：跳过一次性自检继续启动。
+     送样任务每秒打印一次 IMU,ERR，方便区分"串口不通"和"传感器不通"。 */
+  const bool legacy_selftest = (i2c_read_result == bsp::Error::Ok);
+  if (!legacy_selftest) {
+      (void)log.write(bsp::LogLevel::Warning, "IMU not found, self-test skipped");
   }
 
+  if (legacy_selftest) {
   std::uint8_t scratch{};
   i2c_bad_address_result = i2c1.read_register(0xD0, 0x75, &scratch, 1, 100U);
   if (i2c_bad_address_result != bsp::Error::InvalidArgument) {
@@ -421,6 +442,7 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
     }
 }
   }
+  } // end legacy self-test
 
   /* USER CODE END 2 */
 
