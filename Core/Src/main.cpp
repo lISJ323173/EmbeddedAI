@@ -298,6 +298,30 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
   MX_I2C1_Init();
   HAL_Delay(200);
 
+  /* ---- P0.2a：冷上电读取 WHO_AM_I（只读 0x75，不写传感器配置） ---- */
+  {
+      const unsigned addresses[] = {0x68U, 0x69U};
+      for (const unsigned address : addresses) {
+          uint8_t id = 0xFFU;
+          const auto status = HAL_I2C_Mem_Read(
+              &hi2c1, static_cast<uint16_t>(address << 1U),
+              0x75U, I2C_MEMADD_SIZE_8BIT, &id, 1U, 100U);
+          const auto error = HAL_I2C_GetError(&hi2c1);
+
+          char line[96];
+          const int length = std::snprintf(
+              line, sizeof(line),
+              "IMU_DIAG addr=0x%02X hal=%u err=0x%08lX id=0x%02X\r\n",
+              address, static_cast<unsigned>(status),
+              static_cast<unsigned long>(error),
+              static_cast<unsigned>(id));
+          if (length > 0 && length < static_cast<int>(sizeof(line))) {
+              HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
+                                static_cast<uint16_t>(length), 100U);
+          }
+      }
+  }
+
   bsp::II2c& i2c1 = i2c1_port;
 
   i2c_read_result = i2c1.read_register(0x68, 0x75, &mpu_who_am_i, 1, 100U);
