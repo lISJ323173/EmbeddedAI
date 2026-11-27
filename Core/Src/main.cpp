@@ -205,13 +205,15 @@ static void servo_health_task(void*)
 }
 
 /* 20 Hz 送样：一行 6 个原始值，串口助手直接可读。 */
+/* 20 Hz 送样（保持原调度，仅加时间戳）：首列是 HAL_GetTick() 毫秒时间。 */
 static void imu_telemetry_task(void*)
 {
-    std::printf("\r\nIMU,ax,ay,az,gx,gy,gz @20Hz\r\n");
+    std::printf("\r\nIMU,t_ms,ax,ay,az,gx,gy,gz @20Hz\r\n");
     device::Mpu6050RawSample sample{};
     unsigned error_streak = 0U;
 
     for (;;) {
+        const std::uint32_t sampled_at = HAL_GetTick();
         auto status = imu.read_raw(sample, 50U);
 
         if (status != bsp::Error::Ok) {
@@ -232,14 +234,19 @@ static void imu_telemetry_task(void*)
         }
 
         error_streak = 0U;
-        std::printf("IMU,%d,%d,%d,%d,%d,%d\r\n",
+        std::printf("IMU,%lu,%d,%d,%d,%d,%d,%d\r\n",
+                    static_cast<unsigned long>(sampled_at),
                     static_cast<int>(sample.accel_x),
                     static_cast<int>(sample.accel_y),
                     static_cast<int>(sample.accel_z),
                     static_cast<int>(sample.gyro_x),
                     static_cast<int>(sample.gyro_y),
                     static_cast<int>(sample.gyro_z));
-        osDelay(50U);
+
+        /* 补偿式延时：扣除本次读写耗时，把周期钉在 50 ms。 */
+        constexpr std::uint32_t period_ms = 50U;
+        const std::uint32_t spent = HAL_GetTick() - sampled_at;
+        osDelay(spent < period_ms ? (period_ms - spent) : 0U);
     }
 }
 
@@ -534,7 +541,8 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
 
   osThreadAttr_t imu_attributes{};
   imu_attributes.name = "imu";
-  imu_attributes.priority = osPriorityLow;
+  /* 必须高于 servo_rx：后者用 10 ms 阻塞式轮询占着 CPU，低优先级任务会被饿到 130 ms/次。 */
+  imu_attributes.priority = osPriorityHigh;
   imu_attributes.stack_size = 2048U;
 
   if (osThreadNew(imu_telemetry_task, nullptr, &imu_attributes) == nullptr) {

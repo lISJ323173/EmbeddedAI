@@ -7,7 +7,8 @@
 | 当前阶段 | 状态 |
 |---|---|
 | P0 采集链路打通（I²C → 固件 → 串口） | ✅ 已完成 |
-| P1 100 Hz 采样与数据集采集 | ⏳ 进行中 |
+| P1.1 板端毫秒时间戳与采样率标定 | ✅ 20.02 Hz |
+| P1.2 100 Hz 采样与数据集采集 | ⏳ 进行中 |
 | P2 模型训练与 int8 量化 | 未开始 |
 | P3 板上推理（CMSIS-NN） | 未开始 |
 | P4 实测（时延 / RAM / 准确率） | 未开始 |
@@ -63,13 +64,13 @@ build/Debug/framework.hex     # J-Link / 通用烧录器
 
 烧录：Ozone 打开 [`ozone/imu-motion-ai.jdebug`](ozone/imu-motion-ai.jdebug)，点 `Download & Reset Program`。
 
-串口输出（当前版本）：
+串口输出（首列为板端毫秒时间戳）：
 
 ```text
 [INFO] USART1 ready
 [INFO] IMU WHO_AM_I=0x68
-IMU,ax,ay,az,gx,gy,gz @20Hz
-IMU,712,-324,-15832,1895,-290,-741
+IMU,t_ms,ax,ay,az,gx,gy,gz @20Hz
+IMU,2126,-1256,14744,7440,1824,-328,-601
 ```
 
 ## 已实测结果
@@ -82,7 +83,7 @@ IMU,712,-324,-15832,1895,-290,-741
 | 翻转时陀螺跨度 | gx 25321（约 193 °/s） |
 | FLASH 占用 | 68088 B / 1 MB（6.49%） |
 | RAM 占用 | 21544 B / 128 KB（16.44%） |
-| 当前采样率 | 设计 20 Hz，实测约 8.3 Hz（P1 加时间戳后确认） |
+| 当前采样率 | **20.02 Hz**（时间戳间隔 49/50/50 ms，325 样本 / 16 s） |
 
 校验脚本：`python tools/check_imu_log.py`（读取 `p0_flat.txt` / `p0_flip.txt`）。
 

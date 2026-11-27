@@ -120,8 +120,31 @@ PASS: six integer columns and az sign reversal
 - 传感器缺失或总线异常时不死机：打印 `IMU,ERR,<错误码>`，每秒重试一次初始化，接上即自愈；
 - 看门狗改为编译期开关（`APP_USE_IWDG`，默认关闭），避免下载/调试期间被复位。
 
-## 5. 实测数据汇总
+### 4.5 板端时间戳与采样率标定（P1.1）
 
+每行在读取六轴之前记录 `HAL_GetTick()`，格式改为 `IMU,t_ms,ax,ay,az,gx,gy,gz`。
+
+**第一次测量（保持原调度 `osDelay(50)`）**：
+
+```text
+samples 123 / 16 s，相邻间隔全部为 132 ms
+→ 7.6 Hz（远低于 20 Hz 设计值）
+```
+
+根因：送样任务优先级为 `osPriorityLow`，而基线工程的 `servo_rx_task`（`osPriorityNormal`）
+用 10 ms 阻塞式轮询读串口，占用绝大部分 CPU，低优先级任务被饿到约 132 ms 才轮到一次。
+间隔完全一致（全部 132 ms）说明是稳定抢占，而不是随机丢样。
+
+**修复**：送样任务优先级提升到 `osPriorityHigh`；延时改为补偿式 `osDelay(50 - 已耗时)`。
+
+**修复后**：
+
+```text
+TIMING samples=325 rate=20.02 Hz min=49 ms median=50 ms max=50 ms
+PASS: 20 Hz pilot timing
+```
+
+## 5. 实测数据汇总
 | 项目 | 实测值 | 备注 |
 |---|---|---|
 | WHO_AM_I | `0x68` | 冷上电，地址 0x68 |
@@ -129,7 +152,7 @@ PASS: six integer columns and az sign reversal
 | 翻转后 `az`（正面朝下） | −15890 | 符号反转 |
 | 静置合加速度 | 约 0.98–1.05 g | 与放置姿态有关 |
 | 陀螺零偏（静置） | gx 约 +1880（≈14 °/s） | 需后续做零偏标定 |
-| 当前采样率 | 设计 20 Hz，实测约 8.3 Hz（75 s 624 行） | 待加时间戳后确认是否丢样 |
+| 当前采样率 | 20.02 Hz（间隔 49/50/50 ms，325 样本 / 16 s） | 修复优先级饥饿后达标 |
 | FLASH 占用 | 68088 B / 1 MB（6.49%） | 含诊断与送样代码 |
 | RAM 占用 | 21544 B / 128 KB（16.44%） | 静态占用 |
 
