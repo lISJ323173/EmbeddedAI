@@ -42,6 +42,13 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+/* 1 = 打开独立看门狗（原演示行为）；0 = 关闭。
+   调试/下载阶段必须为 0：IWDG 约 3 s 超时，会在 Ozone/J-Link 写 Flash 期间
+   复位芯片，表现为 "Not all data bytes were successfully downloaded"。 */
+#ifndef APP_USE_IWDG
+#define APP_USE_IWDG 0
+#endif
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -63,7 +70,9 @@ extern "C" {
 
 TIM_HandleTypeDef htim3;
 
+#if APP_USE_IWDG
 static IWDG_HandleTypeDef hiwdg{};
+#endif
 static volatile std::uint32_t boot_reset_csr = 0U;
 
 static port::Stm32I2c i2c1_port(hi2c1);
@@ -156,12 +165,14 @@ static volatile std::uint32_t servo_health_missing = 0U;
 
 static void servo_health_task(void*)
 {
+#if APP_USE_IWDG
     hiwdg.Instance = IWDG;
     hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
     hiwdg.Init.Reload = 1499U;
     if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
         Error_Handler();
     }
+#endif
 
     constexpr std::uint32_t window_ticks = 500U;
     auto deadline = osKernelGetTickCount();
@@ -184,9 +195,11 @@ static void servo_health_task(void*)
             }
         }
 
+#if APP_USE_IWDG
         if (HAL_IWDG_Refresh(&hiwdg) != HAL_OK) {
             Error_Handler();
         }
+#endif
         ++servo_health_windows;
     }
 }
