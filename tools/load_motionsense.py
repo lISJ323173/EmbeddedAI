@@ -1,6 +1,6 @@
 """Convert MotionSense A_DeviceMotion_data into the board's IMU CSV format.
 
-Board units: accel +-2g -> 16384 LSB/g ; gyro +-250 dps -> 131 LSB/(deg/s).
+Board units: accel +-8g -> 4096 LSB/g ; gyro +-1000 dps -> 32.8 LSB/(deg/s).
 MotionSense: accel is gravity + userAcceleration in g, rotationRate in rad/s, 50 Hz.
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ TRIALS = {"wlk": (7, 8, 15), "jog": (9, 16), "std": (6, 14), "sit": (5, 13)}
 LABEL = {"wlk": "walk", "jog": "run", "std": "still", "sit": "still"}
 PERIOD_MS = 20  # 50 Hz
 
-ACC_LSB_PER_G = 16384.0
-GYRO_LSB_PER_RAD = 131.0 * 180.0 / math.pi
+ACC_LSB_PER_G = 4096.0
+GYRO_LSB_PER_RAD = 32.8 * 180.0 / math.pi
 
 
 def convert(path: Path, out_dir: Path) -> tuple[str, int]:

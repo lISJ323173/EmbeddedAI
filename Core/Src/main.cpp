@@ -475,6 +475,50 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
   }
   } // end legacy self-test
 
+  /* ---- P1.4：量程改为 ±8 g / ±1000 °/s，并读回校验 ---- */
+  {
+      (void)imu.wake_up(100U);
+
+      constexpr uint16_t address = 0x68U << 1U;
+      constexpr uint16_t config_regs[] = {0x1BU, 0x1CU};
+      constexpr uint8_t range_mask = 0x18U;
+      constexpr uint8_t range_bits = 0x10U;
+      uint8_t readback[2] = {0xFFU, 0xFFU};
+      bool ok = true;
+
+      for (unsigned i = 0; i < 2U; ++i) {
+          uint8_t config = 0U;
+          if (HAL_I2C_Mem_Read(&hi2c1, address, config_regs[i],
+                               I2C_MEMADD_SIZE_8BIT, &config, 1U, 100U) != HAL_OK) {
+              ok = false;
+              break;
+          }
+
+          config = static_cast<uint8_t>((config & 0xE7U) | range_bits);
+          if (HAL_I2C_Mem_Write(&hi2c1, address, config_regs[i],
+                                I2C_MEMADD_SIZE_8BIT, &config, 1U, 100U) != HAL_OK ||
+              HAL_I2C_Mem_Read(&hi2c1, address, config_regs[i],
+                               I2C_MEMADD_SIZE_8BIT, &readback[i], 1U, 100U) != HAL_OK ||
+              (readback[i] & range_mask) != range_bits) {
+              ok = false;
+              break;
+          }
+      }
+
+      char line[80];
+      const int length = std::snprintf(
+          line, sizeof(line), "IMU_RANGE %s gyro=0x%02X accel=0x%02X\r\n",
+          ok ? "OK" : "FAIL", static_cast<unsigned>(readback[0]),
+          static_cast<unsigned>(readback[1]));
+      if (length > 0 && length < static_cast<int>(sizeof(line))) {
+          HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
+                            static_cast<uint16_t>(length), 100U);
+      }
+      if (!ok) {
+          Error_Handler();
+      }
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
