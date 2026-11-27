@@ -258,6 +258,31 @@ gyro_norm : mean 121.0 dps, std 62.9, min 12.3, max 421.0
 
 该窗口仅含两路模长，用于核对切窗流程；39 维窗口特征在 P2 生成。
 
+### 4.10 窗口特征表（P1.6）
+
+每份录制独立切窗：窗口 100 点（2 s）、步长 50 点（1 s），末尾不足 100 点舍弃；
+每个窗口继承原录制的受试者、标签与 train/val/test 划分。
+
+特征共 **8 维**（`motionsense_features.csv`，22,155 行）：
+
+| 通道 | 特征 |
+|---|---|
+| 加速度模长 | `acc_mean` `acc_std` `acc_max` `acc_mean_delta` |
+| 角速度模长 | `gyro_mean` `gyro_std` `gyro_max` `gyro_mean_delta` |
+
+其中 `mean_delta` 为相邻样本差值的绝对值平均，反映信号变化速率。
+
+```text
+FEATURES rows=22155 inputs=8
+train still=8610 walk=4458 run=1727
+val still=2149 walk=1197 run=437
+test still=2006 walk=1123 run=448
+```
+
+校验：216 个录制源的 `start` 均按 0, 50, 100… 递增（无一处步长异常），
+跨录制从 0 重新开始。训练集类别比例约 **5.0 : 2.6 : 1**（still : walk : run），
+训练时需按反比加权。
+
 ## 5. 实测数据汇总
 
 | 项目 | 实测值 | 备注 |
