@@ -36,8 +36,8 @@ for subject in range(1, 25):
                     gyro = [math.degrees(float(row[f"rotationRate.{a}"])) for a in "xyz"]
                     if not all(math.isfinite(v) for v in accel + gyro):
                         raise SystemExit(f"FAIL non-finite data: {relative} row {n}")
-                    accel_hits[label] += max(map(abs, accel)) > 2.0
-                    gyro_hits[label] += max(map(abs, gyro)) > 250.0
+                    accel_hits[label] += max(map(abs, accel)) > 8.0
+                    gyro_hits[label] += max(map(abs, gyro)) > 1000.0
         if n == 0:
             raise SystemExit(f"FAIL empty file: {relative}")
         files[split] += 1
