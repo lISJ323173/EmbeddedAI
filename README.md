@@ -1,101 +1,103 @@
-# 二轴自稳云台
+# 任务四：Embedded AI —— 基于 MPU6050 的人体运动状态识别
 
-基于 STM32F103C8T6、FreeRTOS、MPU6515、HC-05 和双 SG90
-的 yaw-pitch 二轴云台项目，复用现有 framework 框架。
+在 STM32F407 上采集 MPU6050 六轴原始数据，部署小型神经网络，区分 **走路 / 跑步 / 静止** 三种状态。
 
-当前已完成 100 Hz 定时采样、上电陀螺零偏校准、
-四元数互补滤波、蓝牙遥测和舵机开环测试。
-P 轴从水平位置起可上抬约 84°，闭环控制正在开发。
+> 本仓库沿用既有 F407 工程骨架作为基线（保留其 Git 历史），任务四的工作在该基线上增量开发。
 
-- [云台开发记录与阶段结果](docs/gimbal.md)
-
-## 文档
-
-> 文档语言约定：README、`docs/notes.md` 和 `docs/gimbal.md` 用中文，`docs/` 下的架构/接口/移植/验收文档保留英文，便于与代码接口名、日志和提交记录对应。
-
-- [云台开发记录](docs/gimbal.md)：当前 F103 云台进度、接线、P 轴标定与阶段实测结果。
-- [云台功能验收与已知限制](docs/gimbal-acceptance.md)
-- [架构设计](docs/architecture.md)：分层职责、舵机数据流、健康监测/IWDG、任务优先级与栈余量证据。
-- [接口说明](docs/interfaces.md)：UART、CAN、I2C、PWM 接口约定，指令协议与 CRC，地址/超时/缓冲区生命周期，以及启动期 UART 日志。
-- [移植与构建指南](docs/porting.md)：F407/F103 构建命令、ELF 路径、J-Link 目标、接线和验证范围。
-- [验收记录](docs/acceptance.md)：目标板/构建矩阵、实测证据、提交追溯和剩余待验证边界。
-- [取舍与踩坑记录](docs/notes.md)：为什么这样拆分、参数取舍、真实调试过程中遇到的坑。
-
-## 目录结构
-
-| 目录 | 职责 |
+| 当前阶段 | 状态 |
 |---|---|
-| `Core/` | STM32F407 启动、时钟、外设初始化、中断向量、`main` 和 IWDG |
-| `Drivers/` | ST CMSIS 与 STM32F4 HAL（厂商代码，只读） |
-| `Middlewares/` | FreeRTOS 10.3.1 与 CMSIS-RTOS2 |
-| `bsp/` | UART、CAN、I2C、PWM 和日志的纯虚接口，以及统一的 `bsp::Error` |
-| `port/` | BSP 接口的芯片实现；外设访问的 HAL 适配集中在这里，`Core/` 仍保留启动、时钟、中断和板级 fail-stop 所需的 HAL 调用 |
-| `device/` | SG90、MPU6050、指令解析器和带 CRC 校验的解析器 |
-| `module/` | CRC-8/SMBUS 与 5 秒舵机指令状态机 |
-| `application/` | 舵机接收/输出任务、上下文和命令队列 |
-| `config/` | 预留的板级参数表（当前为空） |
-| `tests/host/` | 主机侧 UART、MPU6050 与 CRC 测试 |
-| `docs/` | 架构、接口、移植和验收文档 |
+| P0 采集链路打通（I²C → 固件 → 串口） | ✅ 已完成 |
+| P1 100 Hz 采样与数据集采集 | ⏳ 进行中 |
+| P2 模型训练与 int8 量化 | 未开始 |
+| P3 板上推理（CMSIS-NN） | 未开始 |
+| P4 实测（时延 / RAM / 准确率） | 未开始 |
+
+## 任务要求
+
+1. 说明任务定义、输入维度、采样率、预处理与滑窗方式；
+2. 给出模型结构、参数量与量化方案；
+3. 推理引擎可使用 CMSIS-NN 或自写定点算子，说明算子实现、内存布局与峰值 RAM 占用；
+4. 板上实测表格：单次推理时延、RAM / Flash 占用、准确率、与 PC 浮点结果的误差；
+5. 输出可被观察（串口 / 屏幕 / 上位机）。
+
+完整过程与实测数据见 **[开发文档](docs/development-log.md)**。
+
+## 系统方案
+
+```text
+MPU6050 ──I²C 100 kHz──► STM32F407 ──USART1 115200──► PC（训练 / 评估）
+ 6 轴原始值                采集 + 滑窗 + 推理
+```
+
+| 设计项 | 取值 | 依据 |
+|---|---|---|
+| 采样率 | 100 Hz（当前临时 20 Hz） | 步频 2–3 Hz，留 30 倍余量 |
+| 窗口 | 2 s，50% 重叠 | 容纳 2–4 个步态周期，重叠避免边界丢样 |
+| 输入 | 6 轴 × 统计特征（均值/标准差/极值/过零率） | 先跑通再考虑 1D-CNN |
+| 量化 | int8 对称量化 | CMSIS-NN 原生支持 |
+| 输出 | 串口一行：状态 + 置信度 | 最直接的可观察输出 |
+
+## 硬件接线
+
+| MPU6050 | STM32F407 | 说明 |
+|---|---|---|
+| VCC | 3.3V | 不要接 5V |
+| GND | GND | 必须共地 |
+| SCL | PB6 | I²C1_SCL |
+| SDA | PB7 | I²C1_SDA |
+| AD0 | GND | 地址 0x68 |
+| INT / XDA / XCL | 不接 | — |
+
+串口：USART1（PA9 TX / PA10 RX），**115200 8N1**。
 
 ## 快速开始
 
-### F103 云台工程
-
-在 Git Bash 中执行：
-
 ```bash
-cd /e/framework/port/stm32f1
-cmake --preset Debug
-cmake --build --preset Debug
+# 构建
+cmake --preset Debug && cmake --build --preset Debug
+
+# 产物
+build/Debug/framework.elf     # Ozone 直接加载
+build/Debug/framework.hex     # J-Link / 通用烧录器
 ```
 
-固件路径为 `port/stm32f1/build/Debug/f103_ref.elf`。
-J-Link 目标选择 `STM32F103C8`。
-当前测试通过 HC-05 和 USART2 收发指令与遥测。
+烧录：Ozone 打开 [`ozone/imu-motion-ai.jdebug`](ozone/imu-motion-ai.jdebug)，点 `Download & Reset Program`。
 
-### F407 完整演示
-
-```powershell
-cd E:\framework
-cmake --preset Release
-cmake --build --preset Release
-```
-
-ELF 路径：`build/Release/framework.elf`；J-Link 目标：`STM32F407ZG`；USB-TTL 使用 115200 8N1。应用只接受带 CRC 的指令帧，例如 `S50*B1\n`；旧的纯文本格式 `S50\n` 会被拒绝。
-
-### F103 UART/PWM 移植
-
-```powershell
-cd E:\framework\port\stm32f1
-cmake --preset Debug
-cmake --build --preset Debug
-```
-
-ELF 路径：`port/stm32f1/build/Debug/f103_ref.elf`；J-Link 目标：`STM32F103C8`。
-
-### 主机测试
-
-```powershell
-cd E:\framework
-cmake -S tests/host -B tests/host/build -G Ninja
-cmake --build tests/host/build
-ctest --test-dir tests/host/build --output-on-failure
-```
-
-预期结果：5/5 测试通过。
-
-## 框架基线历史
-
-本节记录原框架阶段的成果。
-当前 F103 云台进度见 [云台开发记录](docs/gimbal.md)。
-
-F407 Release 固件最终占用 `31,880 B` Flash、`21,512 B` RAM（加入启动日志后的 `2d730b6`）；加入日志前的基线为 `31,576 B`（`a0c1025`）。F103 阻塞式 UART + TIM3 PWM 移植基线见提交 `7976c73`。
-
-启动期 UART 日志已验证：
+串口输出（当前版本）：
 
 ```text
 [INFO] USART1 ready
-[WARN] IMU identity unsupported
+[INFO] IMU WHO_AM_I=0x68
+IMU,ax,ay,az,gx,gy,gz @20Hz
+IMU,712,-324,-15832,1895,-290,-741
 ```
 
-外部 CAN 总线、真实 MPU6050 的唤醒与采样、HC-05 无线链路，以及运行期并发日志仍待完成。详情见 [验收记录](docs/acceptance.md) 和 [接口说明](docs/interfaces.md)。
+## 已实测结果
+
+| 项目 | 实测值 |
+|---|---|
+| WHO_AM_I（地址 0x68） | `0x68`，读取 `hal=0 err=0x00000000` |
+| 静置 az（正面朝上） | +17130（比理论 16384 高约 4.5%） |
+| 翻转后 az（正面朝下） | −15890（符号反转，PASS） |
+| 翻转时陀螺跨度 | gx 25321（约 193 °/s） |
+| FLASH 占用 | 68088 B / 1 MB（6.49%） |
+| RAM 占用 | 21544 B / 128 KB（16.44%） |
+| 当前采样率 | 设计 20 Hz，实测约 8.3 Hz（P1 加时间戳后确认） |
+
+校验脚本：`python tools/check_imu_log.py`（读取 `p0_flat.txt` / `p0_flip.txt`）。
+
+## 目录速览
+
+| 目录 | 与任务四相关的部分 |
+|---|---|
+| `Core/Src/main.cpp` | 板级初始化、I²C/串口、WHO_AM_I 诊断、IMU 送样任务 |
+| `device/src/mpu6050.cpp` | MPU6050 驱动，一次读 14 字节（6 轴 + 温度） |
+| `port/stm32f4/` | USART / I²C / PWM 的 HAL 实现 |
+| `tools/` | 日志校验脚本 |
+| `ozone/` | 调试与烧录工程 |
+| `docs/development-log.md` | 任务四开发文档（进度、实测、问题记录） |
+
+## 调试注意事项
+
+用调试器连接会暂停内核。若停在 I²C 传输中途，从机会拉住 SDA，导致 `I2C1.SR2.BUSY=1`，
+此时 MCU 复位无效，**必须整板断电**。这是调试副作用，不是硬件故障。
