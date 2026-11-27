@@ -49,3 +49,6 @@ __pycache__/
 
 # 公开数据集原始/转换产物（体积大，不进版本库）
 data/external/
+
+# 训练虚拟环境
+/.venv-train/

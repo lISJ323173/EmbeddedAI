@@ -283,6 +283,30 @@ test still=2006 walk=1123 run=448
 跨录制从 0 重新开始。训练集类别比例约 **5.0 : 2.6 : 1**（still : walk : run），
 训练时需按反比加权。
 
+### 4.11 PC 训练环境（P2.1）
+
+板端脚本用系统自带的 Python 3.14.7；训练环境另行使用 **Python 3.12.10**
+（TensorFlow 2.20.0 的 Windows 轮子只覆盖到 3.12），两者并存，互不影响。
+
+| 项 | 值 |
+|---|---|
+| 解释器 | `py -3.12` → `C:\Users\...\Programs\Python\Python312\python.exe` |
+| 虚拟环境 | `.venv-train/`（已加入 `.gitignore`） |
+| 依赖 | `requirements-train.txt`：`tensorflow==2.20.0`、`numpy==2.1.3` |
+
+验证：
+
+```text
+$ ./.venv-train/Scripts/python.exe -m pip check
+No broken requirements found.
+
+$ ./.venv-train/Scripts/python.exe -c "..."
+TF 2.20.0 NUMPY 2.1.3
+MATMUL 23
+```
+
+`MATMUL 23` 即 2×4 + 3×5，证明 TensorFlow 能在 CPU 上实际执行计算，而不仅是导入成功。
+
 ## 5. 实测数据汇总
 
 | 项目 | 实测值 | 备注 |
