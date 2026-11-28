@@ -542,7 +542,7 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
                             static_cast<uint16_t>(length), 100U);
       }
       if (!ok) {
-          Error_Handler();
+          (void)log.write(bsp::LogLevel::Warning, "IMU range config failed");
       }
   }
 
