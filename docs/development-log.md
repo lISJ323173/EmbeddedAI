@@ -377,6 +377,32 @@ ERROR logit_mae=0.055653 input_clipped_rows=46
 
 产物：`artifacts/motion_int8.tflite`（2,376 B）。
 
+### 4.14 导出模型参数（P3.1）
+
+自写定点推理的前提是把 `.tflite` 里的常量抄成固件可直接引用的数组。
+`tools/export_model_header.py` 先校验结构，再生成 `config/motion_model_data.hpp`：
+
+- 单子图、两个算子，均为 `FULLY_CONNECTED`，权重格式为默认、第一层融合 ReLU；
+- 张量类型：输入/权重/输出 `int8`，偏置 `int32`；
+- 权重为零点对称量化（`zero_point=0`），且按输出通道逐通道给 scale。
+
+```text
+DENSE1 8->16 weights=128 bias=16
+DENSE2 16->3 weights=48 bias=3
+EXPORT OK config/motion_model_data.hpp
+ARM HEADER OK
+```
+
+导出的量化参数：
+
+| 层 | 输入 scale / zero | 输出 scale / zero | 权重 scale |
+|---|---|---|---|
+| dense1 | 0.0227535 / −92 | 0.0585463 / −128 | 16 个（逐通道） |
+| dense2 | 0.0585463 / −128 | 0.1275901 / 36 | 3 个（逐通道） |
+
+`ARM HEADER OK` 来自 `arm-none-eabi-g++ -std=c++17 -fsyntax-only` 加两条
+`static_assert`（dense1 权重 128 字节、dense2 权重 48 字节），确认头文件语法与数组长度正确。
+
 ## 5. 实测数据汇总
 
 | 项目 | 实测值 | 备注 |
