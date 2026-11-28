@@ -31,6 +31,8 @@
 #include "application/servo_tasks.hpp"
 #include "device/mpu6050.hpp"
 #include "cmsis_os2.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <cstddef>
 #include <cstdio>
 #include "../../config/motion_model_data.hpp"
@@ -168,6 +170,50 @@ static osEventFlagsId_t servo_alive_events = nullptr;
 static volatile std::uint32_t servo_health_windows = 0U;
 static volatile std::uint32_t servo_health_missing = 0U;
 
+/* 调试器 halt 可能把 I2C 从机停在半途，从机拉低 SDA 导致总线一直 BUSY。
+   这里用 9 个 SCL 脉冲 + 一个 STOP 让从机释放总线，然后重新初始化 I2C。 */
+static void i2c_bus_recover()
+{
+    HAL_I2C_DeInit(&hi2c1);
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    GPIO_InitTypeDef scl{};
+    scl.Pin = GPIO_PIN_6;
+    scl.Mode = GPIO_MODE_OUTPUT_OD;
+    scl.Pull = GPIO_NOPULL;
+    scl.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOB, &scl);
+
+    GPIO_InitTypeDef sda_in{};
+    sda_in.Pin = GPIO_PIN_7;
+    sda_in.Mode = GPIO_MODE_INPUT;
+    sda_in.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOB, &sda_in);
+
+    for (int i = 0; i < 9; ++i) {
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+        HAL_Delay(1);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+        HAL_Delay(1);
+    }
+
+    GPIO_InitTypeDef sda_out{};
+    sda_out.Pin = GPIO_PIN_7;
+    sda_out.Mode = GPIO_MODE_OUTPUT_OD;
+    sda_out.Pull = GPIO_NOPULL;
+    sda_out.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOB, &sda_out);
+
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+    HAL_Delay(1);
+
+    MX_I2C1_Init();
+}
+
 static void servo_health_task(void*)
 {
 #if APP_USE_IWDG
@@ -210,6 +256,10 @@ static void servo_health_task(void*)
 }
 
 /* 20 Hz 送样：一行 6 个原始值，串口助手直接可读。 */
+/* 送样任务的栈水位，供调试器直接读取。 */
+volatile std::uint32_t imu_stack_min_free_bytes = 0xFFFFFFFFU;
+volatile std::uint32_t imu_stack_live_checks = 0U;
+
 /* 50 Hz 送样（与 MotionSense 数据集一致）：首列是 HAL_GetTick() 毫秒时间。 */
 static void imu_telemetry_task(void*)
 {
@@ -269,6 +319,9 @@ static void imu_telemetry_task(void*)
                 HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
                                   static_cast<uint16_t>(length), 100U);
             }
+            imu_stack_min_free_bytes = static_cast<std::uint32_t>(
+                uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t));
+            ++imu_stack_live_checks;
         }
 
         /* 补偿式延时：扣除本次读写耗时，把周期钉在 20 ms（50 Hz）。 */
@@ -359,6 +412,10 @@ if (port::uart_router::register_uart(&huart1, &uart1_port)
   bsp::II2c& i2c1 = i2c1_port;
 
   i2c_read_result = i2c1.read_register(0x68, 0x75, &mpu_who_am_i, 1, 100U);
+  if (i2c_read_result != bsp::Error::Ok) {
+      i2c_bus_recover();
+      i2c_read_result = i2c1.read_register(0x68, 0x75, &mpu_who_am_i, 1, 100U);
+  }
 
   /* 没有传感器时不停机：跳过一次性自检继续启动。
      送样任务每秒打印一次 IMU,ERR，方便区分"串口不通"和"传感器不通"。 */

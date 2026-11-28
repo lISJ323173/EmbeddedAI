@@ -530,6 +530,31 @@ Memory region         Used Size  Region Size  %age Used
   但分配在 .bss 而非任务栈上；
 - 以上是**链接期**用量，不等同于运行时峰值；栈峰值需单独测量。
 
+### 4.20 栈水位观测与 I2C 总线自恢复（P5.3）
+
+在 `imu_telemetry_task` 的 `LIVE` 分支中加入两个 `volatile` 全局量：
+
+```cpp
+imu_stack_min_free_bytes = uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t);
+++imu_stack_live_checks;
+```
+
+任务栈 2048 B（`imu_attributes.stack_size`），`INCLUDE_uxTaskGetStackHighWaterMark = 1`；
+峰值用量 = 2048 − 最小剩余。变量地址：`0x2000001C`、`0x20004C24`，可用调试器直接读。
+
+同轮加入 **I2C 总线自恢复**：首次读 `WHO_AM_I` 失败时，把 SCL 当普通 IO 敲 9 个脉冲并
+补一个 STOP，再重新初始化 I2C 后重试。用于修复“调试器 halt 把从机停在半途”导致的总线锁死。
+
+测量当前受阻：串口只有 `IMU,ERR,1`。读寄存器判定为**接线/供电问题**而非总线锁死：
+
+```text
+I2C1 SR1 = 0x00000300   (BERR + ARLO)
+I2C1 SR2 = 0x00000000   (BUSY = 0，总线空闲)
+```
+
+`BUSY=0` 说明 SDA 未被拉住，自恢复无从下手；`ARLO` 且从机无应答，指向 SDA/SCL 接触不良
+或模块掉电——与之前“模块被拿起晃动”的操作吻合。栈水位数据待接线恢复后补测。
+
 ## 5. 实测数据汇总
 
 | 项目 | 实测值 | 备注 |
