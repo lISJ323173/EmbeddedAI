@@ -6,12 +6,11 @@
 
 | 当前阶段 | 状态 |
 |---|---|
-| P0 采集链路打通（I²C → 固件 → 串口） | ✅ 已完成 |
-| P1.1 板端毫秒时间戳与采样率标定 | ✅ 20.02 Hz |
-| P1.2 100 Hz 采样与数据集采集 | ⏳ 进行中 |
-| P2 模型训练与 int8 量化 | 未开始 |
-| P3 板上推理（CMSIS-NN） | 未开始 |
-| P4 实测（时延 / RAM / 准确率） | 未开始 |
+| P0 采集链路（I²C → 固件 → 串口） | ✅ 已完成 |
+| P1 采样率 50 Hz、量程 ±8 g/±1000 °/s、数据集 | ✅ 已完成 |
+| P2 8 维特征 + MLP（195 参数）+ int8 量化 | ✅ 已完成 |
+| P3 自写定点算子，板端两层推理 | ✅ 单样本与 TFLite 完全一致 |
+| P4 板上实测（时延 / RAM / 准确率 / 与 PC 误差） | ⏳ 单样本已通，批量评测待做 |
 
 ## 任务要求
 
@@ -69,7 +68,10 @@ build/Debug/framework.hex     # J-Link / 通用烧录器
 ```text
 [INFO] USART1 ready
 [INFO] IMU WHO_AM_I=0x68
-IMU,t_ms,ax,ay,az,gx,gy,gz @20Hz
+IMU_RANGE OK gyro=0x10 accel=0x10
+BOARD_MODEL bytes=252 hash=AA7C1A9E
+BOARD_INFER scores=[11,58,27] class=1 max_diff=0
+IMU,t_ms,ax,ay,az,gx,gy,gz @50Hz
 IMU,2126,-1256,14744,7440,1824,-328,-601
 ```
 
@@ -78,23 +80,29 @@ IMU,2126,-1256,14744,7440,1824,-328,-601
 | 项目 | 实测值 |
 |---|---|
 | WHO_AM_I（地址 0x68） | `0x68`，读取 `hal=0 err=0x00000000` |
-| 静置 az（正面朝上） | +17130（比理论 16384 高约 4.5%） |
-| 翻转后 az（正面朝下） | −15890（符号反转，PASS） |
-| 翻转时陀螺跨度 | gx 25321（约 193 °/s） |
-| FLASH 占用 | 68088 B / 1 MB（6.49%） |
+| 量程寄存器 | `GYRO=0x10`（±1000 °/s）、`ACCEL=0x10`（±8 g），读回一致 |
+| 静置 az（正面朝上，±8 g） | +4310，即 **1.052 g**，标准差 21 LSB |
+| 采样率 | **51.34 Hz**（间隔 19/19/20 ms） |
+| 数据集 | MotionSense 24 人 / 22,155 个窗口 / 8 维特征 |
+| 浮点验证准确率 | **98.04%**（跑步召回 369/437） |
+| int8 验证准确率 | **97.99%**，与浮点一致率 99.95% |
+| int8 模型体积 | 2,376 B |
+| 板端单样本推理 | `scores=[11,58,27]`，与 TFLite **逐项相同**（max_diff=0） |
+| FLASH 占用 | 70612 B / 1 MB（6.73%） |
 | RAM 占用 | 21544 B / 128 KB（16.44%） |
-| 当前采样率 | **20.02 Hz**（时间戳间隔 49/50/50 ms，325 样本 / 16 s） |
 
-校验脚本：`python tools/check_imu_log.py`（读取 `p0_flat.txt` / `p0_flip.txt`）。
+校验脚本：`tools/check_imu_log.py`、`tools/check_imu_timing.py`、`tools/audit_motionsense.py`。
 
 ## 目录速览
 
 | 目录 | 与任务四相关的部分 |
 |---|---|
-| `Core/Src/main.cpp` | 板级初始化、I²C/串口、WHO_AM_I 诊断、IMU 送样任务 |
+| `Core/Src/main.cpp` | 板级初始化、I²C/串口、量程设置、参数指纹、启动自检推理 |
+| `config/motion_model_data.hpp` | int8 权重/偏置与量化参数（导出生成） |
+| `config/motion_infer.hpp` | 自写定点推理（Q31 重定标，两层全连接） |
 | `device/src/mpu6050.cpp` | MPU6050 驱动，一次读 14 字节（6 轴 + 温度） |
-| `port/stm32f4/` | USART / I²C / PWM 的 HAL 实现 |
-| `tools/` | 日志校验脚本 |
+| `tools/` | 数据转换、特征、训练、量化、导出、校验脚本 |
+| `artifacts/` | 浮点模型、int8 模型、预处理参数 |
 | `ozone/` | 调试与烧录工程 |
 | `docs/development-log.md` | 任务四开发文档（进度、实测、问题记录） |
 
