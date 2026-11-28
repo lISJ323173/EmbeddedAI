@@ -499,6 +499,37 @@ BENCH OK n=200 core_hz=168000000 min=11505 avg=11530 max=11847 cycles
 > （指纹、单样本推理、时延）全部不执行。现改为打印 `[WARN]` 后继续，只有总线故障
 > 时才影响 IMU 数据本身。
 
+### 4.19 Flash 与链接期 RAM（P5.2）
+
+`--clean-first` 重新链接后的分区表：
+
+```text
+Memory region         Used Size  Region Size  %age Used
+             RAM:       22360 B       128 KB     17.06%
+          CCMRAM:           0 B        64 KB      0.00%
+           FLASH:       73048 B         1 MB      6.97%
+```
+
+模型参数与实时窗口的实际字节数（`nm -S`，十进制）：
+
+| 符号 | 字节 | 位置 |
+|---|---|---|
+| `dense1_weights` | 128 | Flash（0x0801...) |
+| `dense1_bias` | 64 | Flash |
+| `dense1_q31` | 64 | Flash |
+| `dense2_weights` | 48 | Flash |
+| `dense2_bias` | 12 | Flash |
+| `dense2_q31` | 12 | Flash |
+| **模型合计** | **328** | 其中 252 B 已做 PC/板端指纹核对 |
+| `motion_window` | 816 | RAM（.bss），其中 800 B 为两路 100 点浮点历史 |
+
+说明：
+
+- 328 = 176（`int8` 权重）+ 76（`int32` 偏置）+ 76（`int32` Q31 乘数）；
+- `motion_window` 是**函数内静态变量**，位于 `imu_telemetry_task` 的作用域，
+  但分配在 .bss 而非任务栈上；
+- 以上是**链接期**用量，不等同于运行时峰值；栈峰值需单独测量。
+
 ## 5. 实测数据汇总
 
 | 项目 | 实测值 | 备注 |
