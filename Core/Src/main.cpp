@@ -36,6 +36,7 @@
 #include "../../config/motion_model_data.hpp"
 #include "../../config/motion_infer.hpp"
 #include "../../config/motion_smoke.hpp"
+#include "../../config/motion_live.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -247,11 +248,33 @@ static void imu_telemetry_task(void*)
                     static_cast<int>(sample.gyro_y),
                     static_cast<int>(sample.gyro_z));
 
+        /* ---- P4.2：实时窗口推理，每 100 点出一次、之后每 50 点一次 ---- */
+        static motion_model::LiveWindow motion_window;
+        std::int8_t live_scores[3]{};
+        if (motion_window.push(sampled_at,
+                               sample.accel_x, sample.accel_y, sample.accel_z,
+                               sample.gyro_x, sample.gyro_y, sample.gyro_z, live_scores)) {
+            int best = 0;
+            for (int i = 1; i < 3; ++i) {
+                if (live_scores[i] > live_scores[best]) best = i;
+            }
+            constexpr const char* labels[] = {"still", "walk", "run"};
+            char line[96];
+            const int length = std::snprintf(
+                line, sizeof(line), "LIVE,%lu,%s,%d,%d,%d\r\n",
+                static_cast<unsigned long>(sampled_at), labels[best],
+                static_cast<int>(live_scores[0]), static_cast<int>(live_scores[1]),
+                static_cast<int>(live_scores[2]));
+            if (length > 0 && length < static_cast<int>(sizeof(line))) {
+                HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
+                                  static_cast<uint16_t>(length), 100U);
+            }
+        }
+
         /* 补偿式延时：扣除本次读写耗时，把周期钉在 20 ms（50 Hz）。 */
         constexpr std::uint32_t period_ms = 20U;
         const std::uint32_t spent = HAL_GetTick() - sampled_at;
-        osDelay(spent < period_ms ? (period_ms - spent) : 0U);
-    }
+        osDelay(spent < period_ms ? (period_ms - spent) : 0U);    }
 }
 
 /* USER CODE END 0 */
