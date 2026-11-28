@@ -34,6 +34,8 @@
 #include <cstddef>
 #include <cstdio>
 #include "../../config/motion_model_data.hpp"
+#include "../../config/motion_infer.hpp"
+#include "../../config/motion_smoke.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -549,6 +551,34 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
           line, sizeof(line), "BOARD_MODEL bytes=%lu hash=%08lX\r\n",
           static_cast<unsigned long>(total),
           static_cast<unsigned long>(fingerprint));
+      if (length > 0 && length < static_cast<int>(sizeof(line))) {
+          HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
+                            static_cast<uint16_t>(length), 100U);
+      }
+  }
+
+  /* ---- P4.1：单样本板端推理对拍 ---- */
+  {
+      std::int8_t scores[3]{};
+      motion_model::infer(smoke_input, scores);
+      int best = 0;
+      int max_diff = 0;
+      for (int i = 0; i < 3; ++i) {
+          if (scores[i] > scores[best]) {
+              best = i;
+          }
+          const int diff = static_cast<int>(scores[i]) - smoke_expected[i];
+          const int magnitude = diff < 0 ? -diff : diff;
+          if (magnitude > max_diff) {
+              max_diff = magnitude;
+          }
+      }
+
+      char line[96];
+      const int length = std::snprintf(
+          line, sizeof(line), "BOARD_INFER scores=[%d,%d,%d] class=%d max_diff=%d\r\n",
+          static_cast<int>(scores[0]), static_cast<int>(scores[1]),
+          static_cast<int>(scores[2]), best, max_diff);
       if (length > 0 && length < static_cast<int>(sizeof(line))) {
           HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
                             static_cast<uint16_t>(length), 100U);

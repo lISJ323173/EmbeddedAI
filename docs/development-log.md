@@ -421,6 +421,30 @@ IMU_RANGE OK gyro=0x10 accel=0x10
 > 直接烧旧 hex 会得到“编译成功但板上行为没变”的假象。烧录前必须重新执行
 > `arm-none-eabi-objcopy -O ihex`。
 
+### 4.16 板端两层定点推理（P4.1）
+
+导出脚本额外为每个输出通道生成 **Q31 整数乘数**：
+
+```text
+q31 = round(weight_scale × input_scale / output_scale × 2^31)
+```
+
+并校验累加器上界 `|bias| + 255 × Σ|w| ≤ 2^31−1`，确保 `int32` 不溢出。
+
+板端 `config/motion_infer.hpp` 实现两层全连接：`int8 × int8 → int32` 累加、减去输入零点、
+乘 Q31 乘数后右移 31 位（带四舍五入）、加输出零点、第一层 ReLU 截到 `dense1_output_zero`。
+
+单样本对拍（验证集首个 walk 窗口）：
+
+```text
+smoke_input    = {-97, -99, -105, -108, -85, -57, -63, -98}
+smoke_expected = {11, 58, 27}
+PC_INFER    true=walk scores=[11, 58, 27] class=1
+BOARD_INFER scores=[11, 58, 27] class=1 max_diff=0
+```
+
+板端三层分数与 TFLite 逐项相同，`max_diff=0`（判据为 ≤1），类别一致（1 = walk）。
+
 ## 5. 实测数据汇总
 
 | 项目 | 实测值 | 备注 |

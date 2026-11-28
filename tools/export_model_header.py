@@ -55,6 +55,14 @@ for i, (inputs, outputs) in enumerate(((8, 16), (16, 3))):
     payload.extend(raw(w, "i1").tobytes())
     payload.extend(raw(b, "<i4").tobytes())
     emit("float", name + "_weight_scale", np.broadcast_to(qw.ScaleAsNumpy(), (outputs,)), lambda v: f"{v:.9e}f")
+    weight_scales = np.broadcast_to(qw.ScaleAsNumpy(), (outputs,))
+    ratio = float(x.Quantization().Scale(0)) / float(y.Quantization().Scale(0))
+    q31 = np.floor(weight_scales.astype(np.float64) * ratio * (1 << 31) + 0.5)
+    bound = np.abs(raw(b, "<i4").astype(np.int64))
+    bound += 255 * np.abs(raw(w, "i1").astype(np.int64)).reshape(outputs, inputs).sum(axis=1)
+    if not np.all((q31 >= 1) & (q31 <= 0x7FFFFFFF)) or np.any(bound > 0x7FFFFFFF):
+        raise SystemExit(f"FAIL {name}: multiplier or accumulator outside supported range")
+    emit("std::int32_t", name + "_q31", q31.astype(np.int32))
     for edge, tensor in (("input", x), ("output", y)):
         q = tensor.Quantization()
         lines.append(f"inline constexpr float {name}_{edge}_scale = {q.Scale(0):.9e}f;")

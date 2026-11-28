@@ -23,6 +23,10 @@ inline constexpr float dense1_weight_scale[16] = {
     6.949836854e-03f, 4.264242016e-03f, 5.960460287e-03f, 6.291471887e-03f, 7.002716884e-03f, 5.154378247e-03f, 6.245652679e-03f, 3.947724123e-03f, 4.376827274e-03f, 3.107317025e-03f, 3.932015039e-03f, 6.062826142e-03f,
     5.324234255e-03f, 5.433988292e-03f, 4.238042980e-03f, 7.608716376e-03f,
 };
+inline constexpr std::int32_t dense1_q31[16] = {
+    5800332, 3558935, 4974599, 5250861, 5844466, 4301843, 5212620, 3294770, 3652899, 2593366, 3281659, 5060033,
+    4443605, 4535205, 3537070, 6350233,
+};
 inline constexpr float dense1_input_scale = 2.275349572e-02f;
 inline constexpr int dense1_input_zero = -92;
 inline constexpr float dense1_output_scale = 5.854633823e-02f;
@@ -38,6 +42,9 @@ inline constexpr std::int32_t dense2_bias[3] = {
 };
 inline constexpr float dense2_weight_scale[3] = {
     1.097500697e-02f, 1.206095051e-02f, 8.277348243e-03f,
+};
+inline constexpr std::int32_t dense2_q31[3] = {
+    10814773, 11884862, 8156500,
 };
 inline constexpr float dense2_input_scale = 5.854633823e-02f;
 inline constexpr int dense2_input_zero = -128;
