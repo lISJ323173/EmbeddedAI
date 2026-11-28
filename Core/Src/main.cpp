@@ -39,6 +39,9 @@
 #include "../../config/motion_infer.hpp"
 #include "../../config/motion_smoke.hpp"
 #include "../../config/motion_live.hpp"
+#if defined(MOTION_TEST_REPLAY)
+#include "../../config/motion_replay.hpp"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -708,9 +711,48 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
       }
   }
 
+#if defined(MOTION_TEST_REPLAY)
+  {
+      constexpr unsigned count = sizeof(motion_replay) / sizeof(motion_replay[0]);
+      unsigned correct[3]{};
+      unsigned agree = 0;
+      double total_error = 0.0;
+
+      for (const auto& item : motion_replay) {
+          std::int8_t scores[3]{};
+          motion_model::infer(item.input, scores);
+          unsigned board_best = 0;
+          unsigned pc_best = 0;
+          for (unsigned i = 0; i < 3; ++i) {
+              if (scores[i] > scores[board_best]) board_best = i;
+              if (item.pc[i] > item.pc[pc_best]) pc_best = i;
+
+              const double board_score =
+                  (static_cast<int>(scores[i]) - motion_model::dense2_output_zero) *
+                  static_cast<double>(motion_model::dense2_output_scale);
+              const double error = board_score - item.pc[i];
+              total_error += error < 0.0 ? -error : error;
+          }
+          correct[item.label] += board_best == item.label;
+          agree += board_best == pc_best;
+      }
+
+      const auto mae_micro = static_cast<unsigned long>(
+          total_error * 1000000.0 / (3U * count) + 0.5);
+      char line[128];
+      const int length = std::snprintf(
+          line, sizeof(line),
+          "BOARD_TEST n=%u still=%u walk=%u run=%u agree=%u logit_mae_micro=%lu\r\n",
+          count, correct[0], correct[1], correct[2], agree, mae_micro);
+      if (length > 0 && length < static_cast<int>(sizeof(line))) {
+          HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
+                            static_cast<uint16_t>(length), 100U);
+      }
+  }
+#endif
+
   MX_TIM3_Init();
-  static port::Stm32PwmCh1 pwm_port(htim3);
-  bsp::IPwm& pwm = pwm_port;
+  static port::Stm32PwmCh1 pwm_port(htim3);  bsp::IPwm& pwm = pwm_port;
 
   if (pwm.start() != bsp::Error::Ok) {
       Error_Handler();

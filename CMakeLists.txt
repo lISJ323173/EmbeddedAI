@@ -121,3 +121,8 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
+
+option(MOTION_TEST_REPLAY "Enable the MotionSense board replay" OFF)
+if(MOTION_TEST_REPLAY)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE MOTION_TEST_REPLAY=1)
+endif()

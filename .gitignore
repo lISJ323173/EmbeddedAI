@@ -52,3 +52,6 @@ data/external/
 
 # 训练虚拟环境
 /.venv-train/
+
+# 回放表由 tools/make_motion_replay.py 生成
+config/motion_replay.hpp
