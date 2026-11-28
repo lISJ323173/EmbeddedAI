@@ -608,6 +608,49 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
       }
   }
 
+  /* ---- P5.1：DWT 周期计数测 infer() 时延 ---- */
+  {
+      constexpr unsigned runs = 200;
+      std::uint32_t min_cycles = 0xFFFFFFFFU;
+      std::uint32_t max_cycles = 0;
+      std::uint64_t total_cycles = 0;
+
+      CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+      DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+      for (unsigned run = 0; run < runs; ++run) {
+          std::int8_t input[8];
+          std::int8_t scores[3];
+          for (unsigned i = 0; i < 8; ++i) {
+              input[i] = smoke_input[i];
+          }
+
+          const std::uint32_t start = DWT->CYCCNT;
+          __asm__ volatile("" : "+m"(input) : : "memory");
+          motion_model::infer(input, scores);
+          __asm__ volatile("" : : "m"(scores) : "memory");
+          const std::uint32_t cycles = DWT->CYCCNT - start;
+
+          if (cycles < min_cycles) min_cycles = cycles;
+          if (cycles > max_cycles) max_cycles = cycles;
+          total_cycles += cycles;
+      }
+
+      char line[128];
+      const int length = std::snprintf(
+          line, sizeof(line),
+          "BENCH %s n=%u core_hz=%lu min=%lu avg=%lu max=%lu cycles\r\n",
+          min_cycles == 0 ? "FAIL" : "OK", runs,
+          static_cast<unsigned long>(SystemCoreClock),
+          static_cast<unsigned long>(min_cycles),
+          static_cast<unsigned long>((total_cycles + runs / 2) / runs),
+          static_cast<unsigned long>(max_cycles));
+      if (length > 0 && length < static_cast<int>(sizeof(line))) {
+          HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
+                            static_cast<uint16_t>(length), 100U);
+      }
+  }
+
   MX_TIM3_Init();
   static port::Stm32PwmCh1 pwm_port(htim3);
   bsp::IPwm& pwm = pwm_port;
