@@ -31,7 +31,9 @@
 #include "application/servo_tasks.hpp"
 #include "device/mpu6050.hpp"
 #include "cmsis_os2.h"
+#include <cstddef>
 #include <cstdio>
+#include "../../config/motion_model_data.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -523,6 +525,35 @@ for (unsigned attempt = 0; attempt < 2; ++attempt) {
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  /* ---- P3.2：核对固件内的模型参数与 PC 导出的字节一致 ---- */
+  {
+      using namespace motion_model;
+      std::uint32_t fingerprint = 2166136261U;
+      std::size_t total = 0;
+      const auto mix = [&](const void* data, std::size_t size) {
+          const auto* bytes = static_cast<const volatile unsigned char*>(data);
+          for (std::size_t i = 0; i < size; ++i) {
+              fingerprint = (fingerprint ^ bytes[i]) * 16777619U;
+          }
+          total += size;
+      };
+
+      mix(dense1_weights, sizeof(dense1_weights));
+      mix(dense1_bias, sizeof(dense1_bias));
+      mix(dense2_weights, sizeof(dense2_weights));
+      mix(dense2_bias, sizeof(dense2_bias));
+
+      char line[64];
+      const int length = std::snprintf(
+          line, sizeof(line), "BOARD_MODEL bytes=%lu hash=%08lX\r\n",
+          static_cast<unsigned long>(total),
+          static_cast<unsigned long>(fingerprint));
+      if (length > 0 && length < static_cast<int>(sizeof(line))) {
+          HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(line),
+                            static_cast<uint16_t>(length), 100U);
+      }
+  }
 
   MX_TIM3_Init();
   static port::Stm32PwmCh1 pwm_port(htim3);

@@ -403,6 +403,24 @@ ARM HEADER OK
 `ARM HEADER OK` 来自 `arm-none-eabi-g++ -std=c++17 -fsyntax-only` 加两条
 `static_assert`（dense1 权重 128 字节、dense2 权重 48 字节），确认头文件语法与数组长度正确。
 
+### 4.15 板端参数指纹核对（P3.2）
+
+PC 端把两层的权重与偏置按顺序拼成 252 字节，计算 FNV-1a 32 位指纹；固件启动时
+用同样的顺序遍历 `config/motion_model_data.hpp` 的四个数组，计算并输出同一指纹。
+
+```text
+PC_MODEL bytes=252 hash=AA7C1A9E
+BOARD_MODEL bytes=252 hash=AA7C1A9E
+IMU_RANGE OK gyro=0x10 accel=0x10
+```
+
+252 = 128 + 48 个 `int8` 权重 + 19 个 `int32` 偏置，两处 `bytes` 与 `hash` 完全一致，
+说明固件中的参数与 PC 导出的字节逐字节相同（尚未涉及推理结果）。
+
+> 踩坑记录：改完源码只跑 `cmake --build` 并不会刷新 `framework.hex`，
+> 直接烧旧 hex 会得到“编译成功但板上行为没变”的假象。烧录前必须重新执行
+> `arm-none-eabi-objcopy -O ihex`。
+
 ## 5. 实测数据汇总
 
 | 项目 | 实测值 | 备注 |

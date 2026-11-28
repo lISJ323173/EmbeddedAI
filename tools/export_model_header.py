@@ -26,6 +26,7 @@ def raw(tensor, dtype):
     return np.frombuffer(data.tobytes(), dtype=dtype)
 
 
+payload = bytearray()
 for i, (inputs, outputs) in enumerate(((8, 16), (16, 3))):
     op = graph.Operators(i)
     code = model.OperatorCodes(op.OpcodeIndex()).BuiltinCode()
@@ -51,6 +52,8 @@ for i, (inputs, outputs) in enumerate(((8, 16), (16, 3))):
     name = f"dense{i + 1}"
     emit("std::int8_t", name + "_weights", raw(w, "i1"))
     emit("std::int32_t", name + "_bias", raw(b, "<i4"))
+    payload.extend(raw(w, "i1").tobytes())
+    payload.extend(raw(b, "<i4").tobytes())
     emit("float", name + "_weight_scale", np.broadcast_to(qw.ScaleAsNumpy(), (outputs,)), lambda v: f"{v:.9e}f")
     for edge, tensor in (("input", x), ("output", y)):
         q = tensor.Quantization()
@@ -62,3 +65,8 @@ target = root / "config/motion_model_data.hpp"
 target.parent.mkdir(exist_ok=True)
 target.write_text("\n".join([*lines, "}", ""]), encoding="utf-8")
 print(f"EXPORT OK {target}")
+
+fingerprint = 2166136261
+for byte in payload:
+    fingerprint = ((fingerprint ^ byte) * 16777619) & 0xFFFFFFFF
+print(f"PC_MODEL bytes={len(payload)} hash={fingerprint:08X}")
