@@ -43,3 +43,11 @@ train_float.py、quantize_int8.py、export_model_header.py、
 export_preprocess.py 和 make_motion_smoke.py。
 板端批量评估先运行 make_motion_replay.py，再以
 `cmake --preset Debug -DMOTION_TEST_REPLAY=ON` 配置。
+
+## 演示视频
+
+[桌面演示（40 秒，720p）](media/demo-desktop-20261128.mp4)
+
+- 内容：上电自检 → 静止判定 `still` → 拿起走动判定 `walk`；
+- **桌面/手持演示**：模块经杜邦线连板，走动范围受限，非佩戴实测；
+- 佩戴场景下的现场准确率未测量，报告中的 94.91% 为回放测试集结果。
